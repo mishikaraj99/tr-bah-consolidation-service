@@ -1,0 +1,1218 @@
+BAH Migration Runbook
+traya-api-server → traya-app-backend · revised 3 September 2026 · v3, with measured
+production traffic
+Build-A-Habit is two systems sharing one write path: the legacy 3/7/21 streak flow, which
+carries effectively 100% of production traffic, and the v85 Habit Tracker revamp, which is
+deployed but has almost no installed base. This document is the ground truth, the measured
+traffic, the difference between the two systems, the full endpoint inventory, and a ticket-by-ticket
+order to work through.
+Source                                             server/components/BAH · 5,582 LOC across
+                                                   12 modules
+
+Endpoints                                          38, registered by buildAHabbitRoute(app) at
+                                                   server/app.js:283 — mounted on the app root,
+                                                   no /bah prefix
+
+Deployments                                        TWO: traya-api-server-prod-prod (app) and
+                                                   traya-internal-api-service-prod-prod (CRM)
+
+Traffic source                                     Last9 APM, span counts by http.route, 27 Aug
+                                                   – 3 Sep 2026
+
+Client impact                                      None — public URLs unchanged at every
+                                                   step. No mobile release required.
+
+
+
+
+00 : the earlier migration was never
+merged to master
+A prior BAH migration effort exists, dated 25 June 2026, with a spec at
+docs/specs/2026-06-25-bah-endpoints-migration.md. It is not on origin/master. It exists only
+on origin/development (commits b9bbea75, a663c811), along with all the code it describes.
+Service                           origin/master (production)        origin/development
+
+bahService.js                     Present                           Present
+
+bahArchivedProductsService.j Present                                Present
+s
+
+kitTrackerPageService.js          Present                           Present
+
+habitTrackerStateResolver.js      Present                           Present
+
+scratchCardService.js             Present                           Present
+Service                          origin/master (production)        origin/development
+
+bahWriteService.js               ABSENT                            Present
+
+bahLogService.js                 ABSENT                            Present
+
+bahActivityLogService.js         ABSENT                            Present
+
+bahStreakBalanceService.js       ABSENT                            Present
+
+bahMedicinesService.js           ABSENT                            Present
+
+bahValidator.js,                 ABSENT                            Present
+bahExpiryService.js
+Production bahRoutes.js carries exactly four routes — /bah/coin/redeem, /bah/archive-product,
+/bah/unarchive-product, /bah/coin/habit-tracker-credit — plus scratchCardRoutes and the three
+/config/cms/kit-tracker-* endpoints. The five migrated BAH endpoints do not exist in production
+at all.
+
+The June port is stale, not merely unmerged
+server/components/BAH/ has taken 43 commits since 20 June 2026 — the entire v85 build,
+scratch cards, lifelines, archived products, the 15-day check-in nudge, the kit-tracker cache
+invalidation, and the appBackendService pooling refactor all landed after that port was written.
+Treat the development code as a reference implementation, not a merge candidate.
+Promoting it blind would roll back two and a half months of work.
+
+BAH runs in two deployments
+The CRM console does not call traya-api-server-prod-prod. It calls
+traya-internal-api-service-prod-prod, which serves the same BAH routes from the same
+component. Any route change lands in both. Measured over 7 days on the internal service:
+Endpoint                                          7-day requests
+
+GET /bahHistory/:caseId                           75,312
+
+GET /rewardBalance/:customerId                    2,257
+
+GET /streakMaster                                 365
+
+POST /extraRewardsToUser/:caseId                  5
+
+PUT                                               3
+/syncRewardBalanceWithShopFlo/:caseId
+
+
+
+
+01 — Measured traffic: what is actually
+in use
+Span counts from Last9, grouped by http.route, service traya-api-server-prod-prod, 7 days. If
+head sampling is enabled these understate absolute volume; relative ordering holds either way.
+
+The ten endpoints that carry the product
+Endpoint                7-day requests          Requests/day            rpm
+
+GET                 1,162,104                   166,015                 115.3
+/streakAndRewardBal
+ance
+
+GET                     771,511                 110,216                 76.5
+/bahLogForGivenDat
+e
+
+GET /coinTransaction    476,051                 68,007                  47.2
+
+GET                     402,045                 57,435                  39.9
+/bah/:userId/calendar
+
+GET                     358,163                 51,166                  35.5
+/rewardBalance/:case
+Id
+
+POST                    174,163                 24,880                  17.3
+/activityLogForBAH
+
+GET                     106,199                 15,171                  10.5
+/medicinesForHowTo
+Use
+
+GET                     36,336                  5,191                   3.6
+/latestOrderHowtoUs
+eV2/:caseId
+
+PUT                    25,184                   3,598                   2.5
+/multipleActivityLogFo
+rBAH
+
+GET                     12,800                  1,829                   1.3
+/latestRoutineV2/:cas
+eId
+
+Near-dead — under 40 requests a day
+Endpoint                      7 days         30 days
+
+GET                         271              613
+/bahDetailDateWiseLikePagin
+ation
+
+GET /latestMedicines          163            371
+
+GET /kit-tracker-page         22             70
+
+GET /activityLogsBAH          7              18
+
+PUT /activityLogForBAH        4              —
+
+GET /kit-tracker-calendar     1              2
+
+GET /kit-tracker-badges       1              2
+
+Zero requests in 7 days — 17 endpoints
+Checked across both deployments.
+Endpoint                      30-day count   Note
+
+GET /faqs                     0              Static JSON
+
+GET /termsAndConditions       0              Static JSON
+
+GET /coinRewardHistory        1              Superseded by
+                                             /coinTransaction
+
+GET /newBahFlowEligibility    0              Returns a hardcoded true
+
+GET /bahHistoryWeb/:caseId    0
+
+GET /bah-challenges-cx-data   0              Campaign appears to be over
+
+GET                          0               v1; only V2 gets traffic
+/latestOrderHowtoUse/:caseId
+
+POST /addCoinBalance          0              Destructive tooling
+
+GET /shopflo/txn/:caseId      0              CRM
+
+POST /shopflo/debitReward     0              CRM
+
+POST /shopflo/creditReward    0              CRM
+
+POST                          0              CRM bulk tool
+/coinScript/:streakMasterId
+
+POST /uploadUsageDetails      0              Admin content-ops
+Endpoint                         30-day count                    Note
+
+POST                             0                               v85 feature, dormant
+/archiveProductForBAH
+
+POST                             0                               v85 feature, dormant
+/unarchiveProductForBAH
+
+GET /bah/scratch-card            1                               v85 feature, dormant
+
+POST                             19                              v85 feature, dormant
+/bah/scratch-card/:id/reveal
+Six of these are v85 features with no installed base — dormant, not dead. The other eleven
+have no traffic in 30 days and no version explanation.
+Net: 23 of 38 BAH endpoints run at under 40 requests a day. Ten endpoints carry essentially all
+the traffic.
+
+
+
+
+02 — App version: which API is live for
+which version
+Version distribution among BAH users
+From /bahLogForGivenDate (771,036 requests carrying appVersion over 7 days; every BAH
+user hits this screen).
+App version                      Requests                        Share
+
+83                               598,655                         77.6%
+
+81                               154,654                         20.1%
+
+71–79                            15,006                          1.9%
+
+82                               2,705                           0.35%
+
+85 and above                     21                              0.003%
+
+80, 84                           0                               —
+
+70 and below                     0                               —
+Fleet-wide (/homePageConfig, 895,254 requests) agrees: v80–84 is 98.3%, v71–79 is 1.7%,
+and v85 and above is 58 requests, or 0.006%.
+The live app population is v83 and v81, with a 2% tail on v71–79. v85 exists as a real build on
+both platforms (iOS user agent Traya/5 CFNetwork, Android okhttp/4.12.0) but is not distributed.
+Version-to-API matrix
+Cohort                            Share of fleet                   Endpoints it calls
+
+v85 and above                     0.006%                           /kit-tracker-page,
+                                                                   /kit-tracker-calendar,
+                                                                   /kit-tracker-badges,
+                                                                   /bah/scratch-card,
+                                                                   /bah/scratch-card/:id/reveal,
+                                                                   /archiveProductForBAH,
+                                                                   /unarchiveProductForBAH,
+                                                                   and POST
+                                                                   /activityLogForBAH with
+                                                                   isHabitTracker true.
+                                                                   Confirmed, not inferred: every
+                                                                   one of the 22 kit-tracker-page
+                                                                   calls carries appVersion=85,
+                                                                   and no other version calls it.
+
+v71 to v84                        ~100%                            /bahLogForGivenDate, POST
+                                                                   /activityLogForBAH (legacy
+                                                                   branch), PUT
+                                                                   /multipleActivityLogForBAH,
+                                                                   /streakAndRewardBalance,
+                                                                   /coinTransaction,
+                                                                   /bah/:userId/calendar,
+                                                                   /rewardBalance/:caseId,
+                                                                   /medicinesForHowToUse,
+                                                                   /latestOrderHowtoUseV2,
+                                                                   /latestRoutineV2
+
+v70 and below                     0%                               Extinct. No requests in 7
+                                                                   days.
+Only /bahLogForGivenDate, /kit-tracker-page and /streakAndRewardBalance send a version
+parameter. The other endpoints carry none, so their version attribution is inferred from the fleet
+distribution plus the code gates rather than measured directly.
+
+Three version gates are now dead branches
+Gate                              Location                         Reality
+
+showBahV3 =                       /bahLogForGivenDate              Always true. The non-v3 else
+Number(appVersion) >= 71                                           path is unreachable.
+
+Number(version) >= 71 for         getStreakAndRewardBalance        Always true. The
+bannerWidgetData and the                                           bannerWidgetData null path
+streak-broken recompute                                            is unreachable.
+Gate                           Location                         Reality
+
+appVersion >= 85               getBahLogForGivenDate            Taken 21 times a week out of
+archived-product filtering                                      771,000.
+
+
+
+
+03 — The v85 revamp: two reward
+economies, one shared write endpoint
+The v85 Habit Tracker is not a redesign of BAH. It is a different reward economy running on
+the same collections, owned by app-backend, deployed to production, and carrying almost no
+traffic.
+Dimension                      Legacy BAH (v71–84,              v85 Habit Tracker
+                               api-server, ~100% of traffic)    (app-backend, 0.006% of
+                                                                fleet)
+
+Read surface                   /streakAndRewardBalance,     /config/cms/kit-tracker-page,
+                               /bahLogForGivenDate,         -calendar, -badges,
+                               /bahDetailDateWiseLikePagin /bah/scratch-card
+                               ation, /bah/:userId/calendar
+
+Reward ladder                  Milestones at day 3 / 7 / 21,    EVERY DAY PAYS. Daily tier
+                               paying 100 / 400 / 2000 coins.   by streak week: 30 / 40 / 50 /
+                               O8+ cohort gets 200 / 600 /      60 / 70 coins. Ladder days 7 /
+                               2500. Nothing on                 14 / 21 / 28 / 35 replace the
+                               non-milestone days.              daily coin with 100 / 150 / 200
+                                                                / 250 / 300.
+
+Streak cap                     Resets to 1 on reaching day      Ladder ends at day 35;
+                               21.                              earning pauses after 35 valid
+                                                                logs in a kit window.
+
+Missing a day                  Gap of more than 2 days          3 LIFELINES PER KIT
+                               breaks the streak outright.      auto-bridge missed days via a
+                                                                BullMQ delayed job. The
+                                                                streak only breaks once the
+                                                                budget is spent.
+
+Coin delivery                  Credited at log time, into       Reward days MINT AN
+                               reward_transactions and the      UNSCRATCHED SCRATCH
+                               Shopflo wallet.                  CARD; coins credit on reveal.
+                                                                7-day scratch window, then
+                                                                forfeited.
+
+Coin expiry                    Order-service driven:            Fixed 90 days.
+                               coin/expiry/month/:userId.
+Dimension                       Legacy BAH (v71–84,             v85 Habit Tracker
+                                api-server, ~100% of traffic)   (app-backend, 0.006% of
+                                                                fleet)
+
+Kit coupling                    Soft: a 45-day medicine         Hard: kit windows of 30 days
+                                window and "Log and Earn is     per kit plus 10-day buffer,
+                                locked" copy.                   reorder banner from day 30n
+                                                                minus 9, pause at 30n plus 5.
+
+Idempotency                     NONE. Re-running the            Enforced: credit_remarks is
+                                reward path re-credits.         habit-tracker-daily-DATE and
+                                                                is checked before crediting.
+
+Cohort and extras               O8+ experiment, male and        None of those apply. Instead:
+                                female streak-restart           21 per-kit badges at 30 logs
+                                bonuses, 15-day check-in        each, and a 13-state page
+                                nudge, community share CTA      resolver.
+                                at 7/21.
+
+The seam
+Both economies are selected inside one api-server endpoint. POST /activityLogForBAH reads
+isHabitTracker straight from the request body; shouldUseHabitTrackerCredit() then either calls
+app-backend's scratch-card mint (v85) or runs the local 3/7/21 credit (legacy). GET
+/bahLogForGivenDate branches on appVersion >= 85, and both app versions call it for the dose
+list.
+So api-server owns the write path and the dose list for v85 users too. The revamp moved the
+display surface to app-backend and left the writes behind. Finishing the migration is about
+moving that write path, not about rebuilding v85.
+
+Correction to the earlier draft
+An earlier version of this document said v85 was "already live and already served by
+app-backend" and listed /bah/:userId/calendar, /bahDetailDateWiseLikePagination,
+/activityLogsBAH and /coinRewardHistory as endpoints superseded by v85 and therefore
+sunset candidates. The traffic data contradicts that. v85 is deployed but not rolled out, so
+nothing is being superseded: /bah/:userId/calendar (402,045 a week) and /coinTransaction
+(476,051 a week) are the third and fourth busiest BAH endpoints and must be migrated, not
+retired.
+
+
+
+
+04 — Endpoint inventory: all 38 routes
+A · Already proxying in production
+Endpoint             7d   Serves   Logic                 Target
+
+POST             0        v85      Removes a             POST
+/archiveProductF                   product from the      /bah/archive-pro
+orBAH                              logging list;         duct
+                                   last-product rule
+                                   enforced
+                                   downstream.
+
+POST                 0    v85      Re-adds a             POST
+/unarchiveProdu                    removed               /bah/unarchive-p
+ctForBAH                           product. Logging      roduct
+                                   history
+                                   untouched.
+
+GET                  0    v85      Scratch-card          GET
+/bah/scratch-car                   dashboard. JWT        /bah/scratch-car
+d                                  userId                d
+                                   forwarded;
+                                   app-backend
+                                   404/410 pass
+                                   through.
+
+POST                 0    v85      Scratches a card      POST
+/bah/scratch-car                   and credits           /bah/scratch-car
+d/:id/reveal                       coins. Where          d/:id/reveal
+                                   v85 rewards
+                                   actually land.
+
+GET                  22   v85      The v85 home      GET
+/kit-tracker-page                  surface: 13-state /config/cms/kit-tr
+                                   resolver, day     acker-page
+                                   strip, reward
+                                   screen, reorder
+                                   banner, feedback
+                                   card.
+
+GET                  1    v85      All months            GET
+/kit-tracker-calen                 first-log to today,   /config/cms/kit-tr
+dar                                grouped as            acker-calendar
+                                   months[]. Redis
+                                   cached, 5 min.
+
+GET                  1    v85      21 per-kit            GET
+/kit-tracker-badg                  badges, earned        /config/cms/kit-tr
+es                                 at 30 valid logs      acker-badges
+                                   per kit window.
+B · Ported on development, absent from production
+Endpoint         7d         Serves   Logic                Reference port
+
+GET             1,162,104   v71–84   The heaviest         GET
+/streakAndRewar                      read: six parallel   /bah/streak-rewa
+dBalance                             queries for          rd-balance,
+                                     balance, streak      bahStreakBalanc
+                                     log, reward          eService (dev
+                                     history, BAH         only)
+                                     eligibility,
+                                     non-void orders
+                                     and user/case.
+                                     Derives the O8+
+                                     and
+                                     streak-restart
+                                     cohorts, the
+                                     banner widget,
+                                     the full modal
+                                     set, the
+                                     community share
+                                     CTA at 7/21, and
+                                     the 15-day
+                                     check-in nudge
+                                     (female, 1 order,
+                                     treatment week
+                                     3, W1/W3 call
+                                     not completed,
+                                     reading Postgres
+                                     user_order_remi
+                                     nders).
+
+GET              771,511    All      The                  GET
+/bahLogForGive                       dose-logging         /bah/log-for-date,
+nDate                                screen for one       bahLogService
+                                     date. Loads the      (dev only)
+                                     day's log plus
+                                     getLatestMedicin
+                                     es, decides
+                                     isPostApiNeeded
+                                     vs
+                                     isPutApiNeeded,
+                                     splits products
+                                     into daily vs
+                                     weekly dosage
+                                     with per-slot
+                                     copy from
+Endpoint             7d        Serves   Logic                Reference port
+
+                                        dosageCode,
+                                        filters archived
+                                        products at
+                                        appVersion 85+,
+                                        appends
+                                        coin-expiry text,
+                                        streak state and
+                                        the challenge
+                                        banner.
+
+POST                 174,163   All      The one write        POST
+/activityLogForB                        both economies       /bah/activity-log,
+AH                                      share. Validates,    bahWriteService
+                                        drops archived       (dev only)
+                                        products,
+                                        resolves the IST
+                                        check-in date,
+                                        writes
+                                        user_activity_log
+                                        s_for_bah, busts
+                                        the kit-tracker
+                                        Redis key.
+                                        Branches on
+                                        isHabitTracker:
+                                        V85 runs
+                                        synchronously
+                                        and mints a
+                                        scratch card;
+                                        LEGACY emits
+                                        an in-process
+                                        event, credits
+                                        3/7/21
+                                        milestones,
+                                        resolves the
+                                        streak-restart
+                                        cohort, mirrors to
+                                        Shopflo. Both
+                                        mark the
+                                        build_a_habit
+                                        tasks and
+                                        enqueue the
+                                        lifeline check.
+
+PUT                  25,184    All      Flips              PUT
+/multipleActivityL                      morning/evening /bah/multiple-acti
+ogForBAH                                check-ins for 4 to vity-log
+Endpoint           7d             Serves             Logic                  Reference port
+
+                                                     5 products in one
+                                                     bulkWrite.
+                                                     Deliberately
+                                                     forgiving: a
+                                                     missing log, an
+                                                     empty payload
+                                                     and a yesterday
+                                                     conflict all return
+                                                     success.
+
+PUT                4              All                Single-product         PUT
+/activityLogForB                                     version of the         /bah/activity-log,
+AH                                                   above.                 bahActivityLogS
+                                                     Effectively dead       ervice (dev only)
+                                                     — four requests
+                                                     in seven days.
+
+C · Not started
+Endpoint                7d                 Logic                     Call
+
+GET /coinTransaction    476,051            Paginated ledger (6       MIGRATE. Sorts and
+                                           per page) that also       slices the full history
+                                           synthesises Expired       in memory; convert to
+                                           rows for credits past     an aggregation.
+                                           expire_at with coins
+                                           unused, joined to the
+                                           streak display name.
+
+GET                     402,045            Calendar or streak        MIGRATE. Takes
+/bah/:userId/calendar                      mode. Range starts        userId from the PATH,
+                                           at the first delivered    not the token — a live
+                                           order or                  IDOR at 57,000
+                                           first_date_of_log;        requests a day. Fix
+                                           paints each day           first.
+                                           inactive / missed /
+                                           logged / coin / active,
+                                           grouped by month.
+
+GET                     358,163            Aggregate of              MIGRATE, but keep a
+/rewardBalance/:case                       unexpired, unspent        local copy —
+Id                                         credits minus debits.     customer/handler
+                                                                     imports it.
+
+GET                     106,199            How-to-use list from      MIGRATE.
+/medicinesForHowTo                         the latest                medicinesForHowToU
+Endpoint                7d       Logic                   Call
+
+Use                              non-void/unknown        seService already
+                                 orders, 50-day or       exists on master.
+                                 bulk-duration window,
+                                 Last Delivered /
+                                 Expired labels.
+
+GET                     36,336   Proxies                MIGRATE. Already
+/latestOrderHowtoUs              recommendation-serv thin.
+eV2/:caseId                      ice
+                                 how-to-use/:caseId,
+                                 then attaches
+                                 reminder info from the
+                                 newest
+                                 customer_activityLog
+                                 with reminder_days.
+
+GET                     12,800   Pass-through to      MIGRATE. Smallest
+/latestRoutineV2/:cas            recommendation-serv live endpoint — good
+eId                              ice routine/:caseId. first cutover.
+
+GET                     271      Day-by-day timeline,  DELETE. 39 requests
+/bahDetailDateWiseLi             minus 90 to plus 21   a day.
+kePagination                     days, with a rolling
+                                 1-to-21 serial and
+                                 Unlock/Missed labels.
+
+GET /latestMedicines    163      The 45-day medicine     DELETE THE
+                                 window. Still hot       ROUTE, keep the
+                                 in-process              function.
+                                 (bahLogForGivenDat
+                                 e, user_task) but
+                                 almost never called
+                                 as a route.
+
+GET                     7        Month grid of logs      DELETE. One
+/activityLogsBAH                 with IST log times.     request a day.
+
+GET                     0        Merged credit and       DELETE.
+/coinRewardHistory               debit ledger. Reads     Superseded by
+                                 its filters from        /coinTransaction.
+                                 req.body on a GET.
+
+GET /faqs, GET          0        Static JSON files.      DELETE.
+/termsAndConditions
+
+GET                     0        Hardcoded true; real    DELETE.
+/newBahFlowEligibilit            check commented
+Endpoint               7d       Logic                     Call
+
+y                               out.
+
+GET                  0          Web rewards view via DELETE.
+/bahHistoryWeb/:case            caseId.
+Id
+
+GET                    0        7-day challenge card;     DELETE after
+/bah-challenges-cx-d            rank from Redis           confirming the
+ata                             BAH!CHALLENGE!R           campaign is over.
+                                ANK keys.
+
+GET                    0        v1 how-to-use with        DELETE. Only V2
+/latestOrderHowtoUs             the 10-branch topical     gets traffic, so the
+e/:caseId                       combination table and     sku_usage model is
+                                sku_usage                 never needed in
+                                aggregation.              app-backend.
+
+D · CRM and admin — stays in api-server
+Endpoint               7d       Logic                     Call
+
+GET                    75,312   CRM agent view: coin      KEEP. Fans out to
+/bahHistory/:caseId             ledger, streak            four BAH reads; will
+                                balance, month log        call app-backend for
+                                grid, latest medicines,   some after Wave 3.
+                                Shopflo balance, and
+                                whether this agent
+                                may grant coins.
+
+GET                    2,257    Balance lookup on         KEEP.
+/rewardBalance/:cust            the internal service.
+omerId
+
+GET /streakMaster      365      Lists active           KEEP.
+                                is_for_superadmin
+                                streak masters for the
+                                CRM bonus
+                                dropdown.
+
+POST                   5        Manual coin grant;        KEEP.
+/extraRewardsToUser             custom amount only
+/:caseId                        for
+                                existing_coins_streak
+                                . Writes the txn and
+                                mirrors to Shopflo.
+
+PUT                    3        Reconciles internal       KEEP.
+Endpoint                7d                      Logic                   Call
+
+/syncRewardBalance                              balance against the
+WithShopFlo/:caseId                             Shopflo wallet.
+
+POST                    0                       Deletes all reward      DELETE after CRM
+/addCoinBalance                                 transactions for a      sign-off. Destructive.
+                                                user, then rebuilds
+                                                from CMS.
+
+GET                     0                       Wallet read by phone    DELETE after CRM
+/shopflo/txn/:caseId                            number.                 sign-off.
+
+POST                    0                       Manual wallet debit.    DELETE after CRM
+/shopflo/debitReward                                                    sign-off.
+
+POST                  0                         Manual wallet credit.   DELETE after CRM
+/shopflo/creditReward                                                   sign-off.
+
+POST                    0                       Bulk grant from a       DELETE after CRM
+/coinScript/:streakMa                           CSV of case ids.        sign-off.
+sterId
+
+POST                    0                       Upserts one             DELETE after
+/uploadUsageDetails                             sku_usage document      content-ops sign-off.
+                                                by variantId.
+
+
+
+
+05 — The tether: functions other
+components import directly
+BAH is not self-contained. handler.js cannot be deleted unless these stay reachable in-process.
+Function                        Imported by                     Disposition
+
+calculateDaysDifference         attendance,                     Move to server/utils. Pure
+                                user_task/handler,              date helper.
+                                user_task/userTask,
+                                customer/handler
+
+getBahRunningLogDay             user_task/handler,              Keep local; one small
+                                user_task/userTask              streak_logs read.
+
+getLatestMedicines              user_task/handler               Keep local even after the
+                                                                route is deleted.
+
+getUserRewardBalance            customer/handler                Keep local; cheap
+                                                                aggregation.
+ Function                           Imported by                        Disposition
+
+ saveRewardTransaction              customer/handler                   Keep local. A SECOND
+                                                                       WRITER of
+                                                                       reward_transactions.
+Lifelines exist twice: api-server has lifelineQueue / lifelineWorker / lifelineDecision / lifelineState /
+applyLifeline / lifelineReconcileCron, and app-backend has the original plus
+habit_tracker_lifeline_logs on master. The api-server BullMQ worker is commented out at
+server/setup/bullmq.js lines 8 to 9, but enqueueLifelineForLog is still called from the live write
+path, so the api-server copy retires only when POST /activityLogForBAH does.
+
+
+
+
+06 — The plan: 22 tickets, picked up one
+at a time
+Every ticket is independently shippable and independently revertible. Rules that apply to all of
+them: app-backend deploys to master first; one ticket per deploy; a write never shares a deploy
+with a read; and every route change lands in both deployments.
+The ordering principle is shrink, then secure, then migrate in ascending blast radius. Waves
+0 and 1 remove 17 endpoints and fix two live defects before any traffic moves, which cuts the
+surface from 38 endpoints to 21 and makes every later ticket smaller.
+
+Wave 0 — Shrink the surface (no migration, pure
+deletion)
+ #                         Ticket                    Scope                     Verify
+
+ 1                         Delete 7 dead app         /faqs,                Last9 shows no 404s
+                           and web endpoints         /termsAndConditions, appearing on those
+                                                     /coinRewardHistory,   paths for 7 days after.
+                                                     /newBahFlowEligibilit
+                                                     y,
+                                                     /bahHistoryWeb/:case
+                                                     Id,
+                                                     /bah-challenges-cx-d
+                                                     ata,
+                                                     /latestOrderHowtoUs
+                                                     e/:caseId (v1). All
+                                                     zero over 30 days.
+                                                     Remove the routes,
+                                                     their handlers,
+                                                     medicineTrackerFAQ
+                                                     s.json and
+#                       Ticket                  Scope                     Verify
+
+                                                medicineTrackerTCs.j
+                                                son.
+
+2                       Retire 6 CRM and        /addCoinBalance,          Written confirmation
+                        admin endpoints         /shopflo/txn,             from CRM ops, then
+                                                /shopflo/debitReward,     the same 7-day 404
+                                                /shopflo/creditReward     watch.
+                                                ,
+                                                /coinScript/:streakMa
+                                                sterId,
+                                                /uploadUsageDetails.
+                                                Zero over 30 days on
+                                                both deployments.
+                                                NEEDS CRM and
+                                                content-ops sign-off
+                                                first — low-frequency
+                                                tools can be quarterly.
+
+3                       Delete 4 near-dead      PUT                    Traffic still under
+                        endpoints after a       /activityLogForBAH (4 threshold at removal
+                        deprecation notice      a week),               time.
+                                                /activityLogsBAH (7),
+                                                /bahDetailDateWiseLi
+                                                kePagination (271),
+                                                and the GET
+                                                /latestMedicines route
+                                                (163 — keep the
+                                                function, it is used
+                                                in-process).
+                                                Announce, wait one
+                                                app release cycle,
+                                                then remove.
+
+4                       Remove the dead         The sub-v71 fallback Unit tests still pass;
+                        version branches        paths in                no behaviour change
+                                                getStreakAndReward for v71+.
+                                                Balance and
+                                                getBahLogForGivenD
+                                                ate. Zero traffic below
+                                                v71, so both are
+                                                unreachable. Deleting
+                                                them shrinks the two
+                                                largest functions
+                                                before they are
+                                                ported.
+Wave 0 exit: 17 endpoints gone. The migration surface is 21 endpoints, of which 10 carry real
+traffic.
+
+Wave 1 — Fix what is broken, before moving anything
+ #           Ticket                  Scope                   Verify
+
+ 5           Fix the IDOR on         The route takes         A token for user A
+             /bah/:userId/calendar   userId from the path,   cannot read user B's
+                                     not the token, at       calendar. Traffic
+                                     57,435 requests a       unchanged.
+                                     day. Bind it to
+                                     req.userId and ignore
+                                     the path parameter,
+                                     or reject a mismatch.
+                                     Independent of the
+                                     migration and should
+                                     not wait for it.
+
+ 6           Make the legacy         v85 guards on           Replaying a log in
+             credit path             credit_remarks =        staging produces
+             idempotent              habit-tracker-daily-DA exactly one credit.
+                                     TE. The legacy 3/7/21
+                                     path has no guard.
+                                     Add an equivalent
+                                     key and a uniqueness
+                                     index on
+                                     reward_transactions
+                                     before any write
+                                     moves. This is the
+                                     precondition for ticket
+                                     19.
+
+ 7           Decide the CCD          api-server emits      A decision recorded
+             question                CCD_UPDATE for        on the ticket.
+                                     ACTIVITY_LOG and
+                                     COIN_CREDITED.
+                                     app-backend has no
+                                     equivalent. Get a
+                                     written decision from
+                                     the data owners: drop
+                                     them, keep the emit
+                                     on the api-server
+                                     proxy after a
+                                     successful response,
+                                     or give app-backend
+                                     an event hop. No
+                                     code, but it blocks
+#   Ticket             Scope                    Verify
+
+                       ticket 19.
+
+8   Re-baseline the    Diff each of the seven A gap list and a
+    development port   dev-only services      rebase-or-rewrite
+                       against its api-server decision per service.
+                       counterpart as it
+                       stands today. Expect
+                       gaps in
+                       archived-product
+                       filtering, the
+                       scratch-card mint
+                       branch, lifeline
+                       enqueue, kit-tracker
+                       cache invalidation,
+                       the 15-day nudge, the
+                       pooling refactor, and
+                       the two August
+                       getStreakAndReward
+                       Balance
+                       simplifications.
+                       Decide per service:
+                       rebase or rewrite.
+                       Default to rewrite.
+
+9   Build the parity   Two cohorts.             One command
+    harness            LEGACY: new user,        produces a full diff
+                       mid-streak, day 21,      report.
+                       streak-broken, O8+
+                       eligible, streak-restart
+                       male and female,
+                       BAH-locked,
+                       15-day-check-in
+                       eligible. V85:
+                       kit-arriving intro, day
+                       1, day 6, day 7
+                       unscratched, day 7
+                       claimed, lifeline used,
+                       all lifelines used,
+                       earning paused, new
+                       kit delivered. Script
+                       every endpoint
+                       against both, diff field
+                       by field including nulls
+                       and array order.
+                       Extend
+                       test/experiments/bah
+#                         Ticket                    Scope                     Verify
+
+                                                    ServiceParity.test.js.
+
+Wave 2 — Migrate reads, ascending blast radius
+Each ticket is one endpoint. Ship it, watch a full day, then take the next. The order is by traffic,
+smallest first, so the first cutover risks 1,829 requests a day and the last risks 166,015.
+#                         Endpoint                  Req/day                   Notes for this ticket
+
+10                        GET                       1,829                     A pass-through to
+                          /latestRoutineV2/:cas                               recommendation-serv
+                          eId                                                 ice. The rehearsal
+                                                                              ticket: proves the
+                                                                              proxy shape, the env
+                                                                              vars and the rollback
+                                                                              drill on the smallest
+                                                                              live endpoint. Needs
+                                                                              RECOMMENDATION
+                                                                              _SERVICE_BASE_U
+                                                                              RL and
+                                                                              V2_FORM_DATA_TO
+                                                                              KEN in app-backend.
+
+11                        GET                       5,191                     Same proxy plus a
+                          /latestOrderHowtoUs                                 customer_activityLog
+                          eV2/:caseId                                         read for
+                                                                              reminder_days. Note
+                                                                              that deleting the v1
+                                                                              route in ticket 1
+                                                                              means the sku_usage
+                                                                              model is never
+                                                                              needed in
+                                                                              app-backend.
+
+12                        GET                       15,171                    medicinesForHowToU
+                          /medicinesForHowTo                                  seService already
+                          Use                                                 exists on master.
+                                                                              Mostly exposure plus
+                                                                              a parity diff.
+
+13                        GET                       51,166                    Cheap aggregation.
+                          /rewardBalance/:case                                Keep the local
+                          Id                                                  getUserRewardBalan
+                                                                              ce for
+                                                                              customer/handler.
+                                                                              The internal-service
+                                                                              /rewardBalance/:cust
+#    Endpoint                Req/day   Notes for this ticket
+
+                                       omerId is a separate
+                                       route and stays.
+
+14   GET                     57,435    Only after ticket 5.
+     /bah/:userId/calendar             Forward the token
+                                       identity, never the
+                                       path parameter.
+
+15   GET /coinTransaction    68,007    Convert the
+                                       in-memory sort and
+                                       slice to an
+                                       aggregation while
+                                       porting. Include the
+                                       synthesised Expired
+                                       rows in the parity diff.
+
+16   GET                     110,216   The largest read, and
+     /bahLogForGivenDat                it drags
+     e                                 getLatestMedicines
+                                       with it. Land
+                                       bahLogService and
+                                       bahMedicinesService
+                                       on master, reconciled
+                                       per ticket 8. Forward
+                                       appVersion so the
+                                       85+ archived-product
+                                       branch keeps
+                                       working.
+                                       getLatestMedicines
+                                       stays in api-server for
+                                       user_task.
+
+17   GET                 166,015       The heaviest
+     /streakAndRewardBal               endpoint and the
+     ance                              widest surface:
+                                       cohorts, modals,
+                                       banner, community
+                                       CTA, 15-day nudge.
+                                       Needs
+                                       COMMUNITY_BASE
+                                       _URL and the
+                                       user_order_reminder
+                                       s Postgres model in
+                                       app-backend. CRM
+                                       /bahHistory depends
+                                       on it, so check
+#            Endpoint              Req/day   Notes for this ticket
+
+                                             /bahHistory after this
+                                             lands.
+
+Wave 3 — Migrate the writes
+#            Ticket                Req/day   Notes
+
+18           PUT                    3,598    An idempotent field
+             /multipleActivityLogFo          update on an existing
+             rBAH                            document — the
+                                             safest write and the
+                                             rehearsal for the next
+                                             ticket. Keep the
+                                             forgiving semantics: a
+                                             missing log, an empty
+                                             payload and a
+                                             yesterday conflict all
+                                             answer success.
+                                             Turning those into
+                                             errors is a
+                                             client-visible
+                                             regression.
+
+19           POST                  24,880    Its own deploy, alone.
+             /activityLogForBAH              Preconditions: tickets
+                                             6, 7, 8, 9 all closed.
+                                             Preserve the
+                                             isHabitTracker branch
+                                             verbatim — v85
+                                             synchronous so the
+                                             scratch card is in the
+                                             response, legacy
+                                             fire-and-forget. Move
+                                             the
+                                             kit-tracker-calendar
+                                             cache invalidation
+                                             with the write. Move
+                                             enqueueLifelineForLo
+                                             g and retire the
+                                             api-server lifeline
+                                             modules in the same
+                                             change. Verify exactly
+                                             one credit per log per
+                                             cohort in staging
+                                             before production.
+Wave 4 — Close out
+#               Ticket                          Scope
+
+20              Re-point CRM /bahHistory        It fans out to
+                                                getRewardCoinHistory,
+                                                getStreakAndRewardBalance
+                                                , getActivityLogs and
+                                                getLatestMedicines. After
+                                                Wave 2 some of those live in
+                                                app-backend; make the
+                                                internal service call them
+                                                there rather than keeping a
+                                                second copy.
+
+21              Extract the tether and delete   Move
+                the dead half                   calculateDaysDifference to
+                                                server/utils. Keep
+                                                getBahRunningLogDay,
+                                                getUserRewardBalance,
+                                                saveRewardTransaction and
+                                                getLatestMedicines in a small
+                                                internal module. Delete the
+                                                now-unreachable write path
+                                                and helpers, the duplicated
+                                                lifeline modules and their
+                                                tests, and the commented
+                                                BullMQ registrations. Trim the
+                                                BAH test suite to what
+                                                remains.
+
+22              Decide the v85 rollout          Not migration work. v85 is
+                                                code-complete on both
+                                                platforms and carries 0.006%
+                                                of traffic. Either roll it out, or
+                                                set a date to remove the
+                                                dormant surface. Until one of
+                                                those happens the codebase
+                                                carries two reward
+                                                economies, and every ticket
+                                                above has to keep both alive.
+
+
+
+
+07 — Risks
+Severity               Risk                    What happens             Mitigation
+
+Blocking · security    Live IDOR on            userId is read from      Ticket 5, ahead of all
+                       /bah/:userId/calendar   the path rather than     migration work.
+                                               the token, on an
+                                               endpoint serving
+                                               57,435 requests a
+                                               day. Any
+                                               authenticated user
+                                               can read any other
+                                               user's logging
+                                               calendar.
+
+Blocking · data        Legacy crediting is     The legacy 3/7/21        Ticket 6 before ticket
+integrity              not idempotent          path has no guard,       19. Flip the write
+                                               and both services can    endpoint alone and
+                                               write                    verify one credit per
+                                               reward_transactions      log per cohort.
+                                               and call the Shopflo
+                                               credit API. A retry or
+                                               a half-deployed fleet
+                                               double-credits.
+
+Blocking ·             CCD events stop         ACTIVITY_LOG and       Ticket 7 — a recorded
+downstream data        firing                  COIN_CREDITED          decision from the
+                                               are emitted from       data owners.
+                                               api-server only.
+                                               app-backend has no
+                                               equivalent and the
+                                               June port omitted
+                                               them, so
+                                               customer-computed-d
+                                               ata goes quietly stale
+                                               from ticket 19
+                                               onward.
+
+Blocking ·             Promoting the stale     Merging                  Ticket 8. Never
+correctness            port                    development's BAH        promote a dev-branch
+                                               services to master       BAH service without a
+                                               would overwrite two      line-by-line diff.
+                                               and a half months of
+                                               v85 work with a June
+                                               snapshot.
+
+Medium · correctness   The economy branch      isHabitTracker arrives   Forward it explicitly,
+                       is client-supplied      in the request body      and consider deriving
+                                               and selects which        it from appVersion
+                                               reward economy           instead so the
+Severity            Risk                   What happens              Mitigation
+
+                                           runs. After ticket 19     economy follows the
+                                           that choice crosses a     client build.
+                                           service boundary.
+
+Medium · coupling   Shared Redis keys      saveActivityLogs          The invalidation
+                                           busts the                 moves with the write
+                                           kit-tracker-calendar      in ticket 19. Grep both
+                                           key that app-backend      repos for each key
+                                           owns.                     before deleting.
+                                           bahChallengeData
+                                           reads
+                                           BAH!CHALLENGE!R
+                                           ANK keys written
+                                           elsewhere.
+
+Medium · contract   Error shapes diverge   api-server answers        Check what the app
+                                           with an err object and    does with each
+                                           a 500 for almost          response before
+                                           everything;               flipping. Preserve the
+                                           app-backend answers       old shape where a
+                                           with a message and a      client parses err.
+                                           real status, forwarded
+                                           through the proxy.
+
+Medium · scope      Two deployments        The CRM runs the          Every ticket's
+                                           same BAH                  verification step
+                                           component in              checks both services
+                                           traya-internal-api-serv   in Last9, not just
+                                           ice. A route flip in      api-server.
+                                           api-server lands there
+                                           too.
+
+Low · scope         v85 dormancy           Every ticket has to       Ticket 22 — force a
+                                           keep two reward           roll-out-or-remove
+                                           economies working         decision.
+                                           for a feature used by
+                                           0.006% of the fleet.
+
+
+
+
+08 — Environment and gaps
+app-backend
+Variable                                       Needed by
+
+RECOMMENDATION_SERVICE_BASE_URL Ticket 10
+
+V2_FORM_DATA_TOKEN                             Ticket 10
+
+S3_IMAGE_BASE_URL                              Ticket 16 (product and banner assets)
+
+COMMUNITY_BASE_URL                             Ticket 17 — net-new, the 7/21-day share CTA
+
+ORDER_SERVICE_BASE_URL                         Ticket 19 (legacy coin expiry)
+
+SHOPFLO_WALLET_API_ENPOINT                     Ticket 19
+
+SHOPFLO_WALLET_ISSUER_ID                       Ticket 19
+
+SHOPFLO_WALLET_MERCHANT_ID                     Ticket 19
+
+SHOPFLO_WALLET_API_KEY                         Ticket 19
+
+api-server, proxy side
+Variable                                       Note
+
+APP_BACKEND_SERVER_BASE_URL                    Required in both deployments
+
+APP_BACKEND_MAX_SOCKETS                        Pool size, defaults to 25
+
+HTTP_DEFAULT_TIMEOUT_MS                        Client default
+
+Models still missing in app-backend
+Missing                                        Needed for
+
+user_order_reminders (Postgres)                The 15-day check-in nudge inside ticket 17
+
+sku_usage (Mongo)                              NO LONGER NEEDED once ticket 1 deletes
+                                               /latestOrderHowtoUse v1
+
+multer, csvtojson                              NO LONGER NEEDED once ticket 2 deletes
+                                               /coinScript
+
+
+
+
+09 — Per-cutover checklist
+Run this for every ticket in Waves 2 and 3, not once for the migration.
+  1.​ Diff both cohorts — legacy and v85 — api-server local vs app-backend, field by field
+      including nulls and array ordering.
+  2.​ Deploy app-backend to master first. The proxy target must exist in production before
+    the proxy does.
+3.​ Confirm the env vars that ticket needs are present in the environment you just deployed
+    to.
+4.​ Flip the route and ship. One ticket per deploy; a write never shares a deploy with a read.
+5.​ Watch a full day in Last9 — request count, error rate and p95 on that route, in BOTH
+    traya-api-server-prod-prod and traya-internal-api-service-prod-prod. For writes, also the
+    count of reward transactions per log, split by cohort.
+6.​ Only then delete the local handler, and only once nothing in section 05 imports it.
+
