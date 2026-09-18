@@ -49,9 +49,12 @@ func TestAppendLedger_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	bal, err := s.Balance(ctx, cust)
+	require.NoError(t, err)
+	assert.Equal(t, 40, bal, "sum of amounts")
 	latest, err := s.LatestLedger(ctx, cust)
 	require.NoError(t, err)
-	assert.Equal(t, 40, latest.BalanceAfter)
+	assert.Equal(t, 40, latest.BalanceAfter, "newest row carries the final balance")
 	err = s.WithTx(ctx, func(tx pgx.Tx) error {
 		_, err := s.AppendLedger(ctx, tx, cust, nil, -41, "REDEEM")
 		return err

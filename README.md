@@ -13,10 +13,24 @@ Rollout: `docs/superpowers/specs/2026-09-18-rollout-plan.md`.
 3. Swagger: `go install github.com/swaggo/swag/cmd/swag@latest && swag init`, then `/api/docs/`.
 
 ## Test
+
+Unit tests need nothing:
 ```
-go test ./...                                  # unit tests
+go test ./...
+```
+
+Integration tests run only when their datastore env vars are set, and skip otherwise.
+With the bundled compose file:
+```
 docker compose -f docker-compose.test.yml up -d
 TEST_MONGO_URI=mongodb://localhost:27117 \
 TEST_PG_URI=postgres://postgres:test@localhost:55432/bah_test \
-TEST_REDIS_ADDR=localhost:63790 go test ./...  # + integration tests
+TEST_REDIS_ADDR=localhost:63790 go test ./... -count=1
+```
+Or against locally installed services:
+```
+createdb bah_test
+TEST_PG_URI="postgres://$(whoami)@localhost:5432/bah_test?sslmode=disable" \
+TEST_REDIS_ADDR=localhost:6379 \
+TEST_MONGO_URI=mongodb://localhost:27017 go test ./... -count=1
 ```

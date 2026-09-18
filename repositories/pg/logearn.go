@@ -144,23 +144,37 @@ func (s *LogEarnStore) WithTx(ctx context.Context, fn func(pgx.Tx) error) error 
 	return tx.Commit(ctx)
 }
 
-// AppendLedger mirrors creditCash/debitCash: lock the latest row, compute balance_after, insert.
+// Balance is the authoritative balance: the sum of every ledger amount for the customer.
+// Order-independent on purpose — see AppendLedger.
+func (s *LogEarnStore) Balance(ctx context.Context, customerID string) (int, error) {
+	var n int
+	err := s.Read.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::int FROM cash_ledger WHERE customer_id = $1`, customerID).Scan(&n)
+	return n, err
+}
+
+// AppendLedger mirrors creditCash/debitCash: serialise per customer, compute balance_after, insert.
 // amount < 0 debits; a debit below zero returns ErrInsufficientBalance.
+//
+// The balance is summed rather than read from the newest row's balance_after. `created_at` defaults
+// to NOW(), which is the TRANSACTION START time, so under concurrency the newest-by-timestamp row is
+// not necessarily the last committed one: three concurrent credits could each read the same prior
+// balance and write the same balance_after. Summing is order-independent and cannot drift.
+// created_at is written with clock_timestamp() so display ordering follows insertion order.
 func (s *LogEarnStore) AppendLedger(ctx context.Context, tx pgx.Tx, customerID string, orderID *string, amount int, reason string) (int, error) {
-	// Serialise per customer with an advisory lock (the ledger may have no rows yet to lock).
+	// Serialise writers for this customer; the ledger may have no rows yet, so a row lock is not enough.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, customerID); err != nil {
 		return 0, err
 	}
 	var balance int
-	err := tx.QueryRow(ctx, `SELECT balance_after FROM cash_ledger WHERE customer_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, customerID).Scan(&balance)
-	if err != nil && err != pgx.ErrNoRows {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::int FROM cash_ledger WHERE customer_id = $1`, customerID).Scan(&balance); err != nil {
 		return 0, err
 	}
 	if amount < 0 && balance+amount < 0 {
 		return balance, ErrInsufficientBalance
 	}
 	after := balance + amount
-	if _, err := tx.Exec(ctx, `INSERT INTO cash_ledger (customer_id, order_id, amount, reason, balance_after) VALUES ($1,$2,$3,$4,$5)`, customerID, orderID, amount, reason, after); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO cash_ledger (customer_id, order_id, amount, reason, balance_after, created_at)
+ VALUES ($1,$2,$3,$4,$5, clock_timestamp())`, customerID, orderID, amount, reason, after); err != nil {
 		return 0, err
 	}
 	return after, nil
