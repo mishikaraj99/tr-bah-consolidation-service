@@ -28,13 +28,15 @@ func (f *fakeCCD) Publish(_ context.Context, tenantID, eventType, caseID string,
 
 // fakeOrders is an in-memory OrderSource.
 type fakeOrders struct {
-	byUser     []orders.Order
-	userCase   *pgrepo.UserCase
-	reminders  []pgrepo.ReminderRow
-	products   []pgrepo.ProductDesc
-	firstDeliv *time.Time
-	latest     *orders.Order
-	count      int
+	byUser      []orders.Order
+	userCase    *pgrepo.UserCase
+	reminders   []pgrepo.ReminderRow
+	products    []pgrepo.ProductDesc
+	firstDeliv  *time.Time
+	latest      *orders.Order
+	count       int
+	formSession *pgrepo.FormSession
+	syntheticID string
 }
 
 func (f *fakeOrders) NonVoidOrdersByUser(context.Context, string) ([]orders.Order, error) {
@@ -71,6 +73,19 @@ func (f *fakeOrders) ProductsByPrincipalIDs(context.Context, []string) ([]pgrepo
 func (f *fakeOrders) FinishedReminders(context.Context, string, time.Time) ([]pgrepo.ReminderRow, error) {
 	return f.reminders, nil
 }
+func (f *fakeOrders) LatestFormSession(context.Context, string, string) (*pgrepo.FormSession, error) {
+	return f.formSession, nil
+}
+func (f *fakeOrders) CreateFormSession(context.Context, string, string, string, string, string, *string, time.Time) (string, error) {
+	return "sess-new", nil
+}
+func (f *fakeOrders) FeedbackFormExists(context.Context, string) (bool, error) { return true, nil }
+func (f *fakeOrders) CreateFeedbackForm(context.Context, string, string, string, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeOrders) LatestSyntheticID(context.Context, string) (string, error) {
+	return f.syntheticID, nil
+}
 
 // fakeHabit records MintOrCredit calls.
 type fakeHabit struct {
@@ -106,4 +121,8 @@ func newTestService(t *testing.T, now time.Time) (*Service, *fakeCCD, *fakeOrder
 		Log:  slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})
 	return svc, ccd, po
+}
+
+func pgUserCase(caseID, gender string) *pgrepo.UserCase {
+	return &pgrepo.UserCase{UserID: "u1", CaseID: caseID, Gender: gender, PhoneNumber: "9876543210"}
 }

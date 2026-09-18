@@ -61,6 +61,11 @@ type OrderSource interface {
 	UserExists(ctx context.Context, userID string) (bool, error)
 	ProductsByPrincipalIDs(ctx context.Context, ids []string) ([]pgrepo.ProductDesc, error)
 	FinishedReminders(ctx context.Context, userID string, since time.Time) ([]pgrepo.ReminderRow, error)
+	LatestFormSession(ctx context.Context, caseID, formID string) (*pgrepo.FormSession, error)
+	CreateFormSession(ctx context.Context, formID, formName, userID, caseID, gender string, currentQuestionID *string, now time.Time) (string, error)
+	FeedbackFormExists(ctx context.Context, sessionID string) (bool, error)
+	CreateFeedbackForm(ctx context.Context, sessionID, caseID, userID, formID, formName string, now time.Time) error
+	LatestSyntheticID(ctx context.Context, caseID string) (string, error)
 }
 
 // Deps are the collaborators a legacy Service needs.
