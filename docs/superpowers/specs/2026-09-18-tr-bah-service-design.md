@@ -194,6 +194,7 @@ Dependency rule: `controllers → internal/* → repositories → setup`. `inter
 ### 3.3 Tenancy
 
 - Registry: Mongo `master` DB, collection `tenant` `{tenant_id, tenant_name}`. Cached in-process after first read; unknown ids are re-checked at most once a minute.
+- `DEFAULT_TENANT` (optional): when set, a request without `x-tenant-id` is treated as that tenant. Used only in the ALB-direct rollout phase for Traya (rollout plan §5); unset elsewhere so a missing header is a 400.
 - Tenant Mongo DB name: `${tenant_id}_${MONGO_DATABASE_SUFFIX}`; when `ENVIRONMENT=production` and tenant is `traya` → `TrayaProd`. Overridable per tenant with `MONGO_DB_NAME_<TENANT>`.
 - Tenant Postgres: `traya` → single pool from `DATABASE_*` (the api-server database, where `orders`, `users`, `cases`, `product_sku_mapping`, `medicine_master`, `user_order_reminders`, `form_session` live). `mool`/`acne` → pool per tenant on `${tenant_id}_${POSTGRES_DATABASE_SUFFIX}` using `POSTGRES_WRITE_*` (reads also go to the writer; a `POSTGRES_READ_*` replica pool is used for `SELECT`s in `state` when configured).
 - Economy map (code constant, overridable by `TENANT_ECONOMIES` JSON env): `traya: [legacy, habit]`, `mool: [logearn]`, `acne: [logearn]`. A route whose economy is not enabled for the tenant returns 404 `{message:"Not available for tenant <id>"}`.
@@ -314,7 +315,7 @@ Preserved per route family, table in `inventory-api-server-legacy-bah.md` §5 an
 
 ## 7. Configuration
 
-`.env.example` lists every variable with a comment. Required at boot: `MONGO_URI`, `SERVICES_CACHE_HOST`, `JWT_SECRET`, `V2_FORM_DATA_TOKEN`, `INTERNAL_SERVICE_TOKEN`, `DATABASE_*` (traya PG), `POSTGRES_WRITE_*` + `POSTGRES_DATABASE_SUFFIX`, `MONGO_DATABASE_SUFFIX`, `ENVIRONMENT`. Upstream base URLs are validated lazily on first use so a tenant with no Shopflo, say, still boots. `PORT` default 3000.
+`.env.example` lists every variable with a comment. Required at boot: `MONGO_URI`, `SERVICES_CACHE_HOST`, `JWT_SECRET`, `V2_FORM_DATA_TOKEN`, `INTERNAL_SERVICE_TOKEN`, `DATABASE_*` (traya PG), `POSTGRES_WRITE_*` + `POSTGRES_DATABASE_SUFFIX`, `MONGO_DATABASE_SUFFIX`, `ENVIRONMENT`. Upstream base URLs are validated lazily on first use so a tenant with no Shopflo, say, still boots. `PORT` default 3000. Optional: `DEFAULT_TENANT` (see §3.3).
 
 ## 8. Testing
 
@@ -325,6 +326,8 @@ Preserved per route family, table in `inventory-api-server-legacy-bah.md` §5 an
 - `go vet`, `staticcheck`, `gofmt` clean; `swag init` regenerates `docs/swagger.*`.
 
 ## 9. Cutover notes (for the runbook owner)
+
+The full traffic-routing plan (api-server proxy shims → ALB weighted rules for Traya; consumer-gateway percentage ramp for mool/acne) is in `2026-09-18-rollout-plan.md`. Summary:
 - Deploy this service, run `cmd/migrate` for mool/acne, verify indexes were created in each tenant Mongo DB.
 - api-server flips one route per deploy to `${BAH_SERVICE_BASE_URL}<same path>` forwarding `Authorization`, `x-app-version`, `x-tenant-id: traya`. Both api-server deployments flip together.
 - app-backend's home-page widgets keep calling their in-process services until ticket 20; nothing here blocks them.
