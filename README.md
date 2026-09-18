@@ -52,6 +52,13 @@ Unit tests need nothing:
 go test ./...
 ```
 
+On an Apple-silicon Mac whose Go toolchain is the amd64 build (`go env GOARCH` reports `amd64`
+while `uname -m` reports `arm64`), every test binary runs under Rosetta and starting many at once
+stalls. Add `-p 1` there:
+```
+go test ./... -p 1
+```
+
 Integration tests run only when their datastore env vars are set, and skip otherwise.
 With the bundled compose file:
 ```

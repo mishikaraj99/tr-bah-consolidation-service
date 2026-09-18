@@ -50,6 +50,9 @@ Plan: `2026-09-18-tr-bah-service.md` (33 tasks). All 33 are implemented and comm
   build on them): **skipped** — no MongoDB on this machine. Homebrew refuses the `mongodb/brew` tap
   without an explicit `brew trust`, and Docker is unavailable. Run them with:
   `TEST_MONGO_URI=mongodb://localhost:27017 go test ./... -count=1`
+- `go test ./...` must be run with `-p 1` on this machine: its Go toolchain is the amd64 build on
+  an arm64 Mac, so the test binaries run under Rosetta and starting nine at once stalls them before
+  they execute. Each package passes on its own, and serially. A native arm64 toolchain removes this.
 - `swag init` was not run: this Mac's Go toolchain is x86_64 while its command-line tools are
   arm64-only, so cgo cannot build `swag`. Annotations are in the handlers; generate `docs/` in CI.
 - End-to-end boot was exercised up to the Mongo dependency: the service loads config, builds every
