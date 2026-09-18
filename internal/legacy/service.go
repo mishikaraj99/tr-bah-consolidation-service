@@ -43,6 +43,11 @@ type HabitCreditor interface {
 	MintOrCredit(ctx context.Context, in HabitCreditInput) (HabitCreditResult, error)
 }
 
+// LifelineEnqueuer schedules the next lifeline check after a valid log.
+type LifelineEnqueuer interface {
+	EnqueueForLog(ctx context.Context, userID string, logDate time.Time) error
+}
+
 // CCDPublisher emits customer-computed-data events.
 type CCDPublisher interface {
 	Publish(ctx context.Context, tenantID, eventType, caseID string, payload map[string]any)
@@ -79,6 +84,7 @@ type Deps struct {
 	ConfigClient *orders.ConfigServiceClient
 	Shopflo      *ShopfloClient
 	Habit        HabitCreditor
+	Lifeline     LifelineEnqueuer
 	CCD          CCDPublisher
 	Dispatcher   *Dispatcher
 	Log          *slog.Logger

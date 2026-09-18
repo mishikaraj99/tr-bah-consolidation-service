@@ -126,3 +126,18 @@ func newTestService(t *testing.T, now time.Time) (*Service, *fakeCCD, *fakeOrder
 func pgUserCase(caseID, gender string) *pgrepo.UserCase {
 	return &pgrepo.UserCase{UserID: "u1", CaseID: caseID, Gender: gender, PhoneNumber: "9876543210"}
 }
+
+func orderFixture(now time.Time) []orders.Order {
+	d := now.AddDate(0, 0, -8)
+	return []orders.Order{{ID: "o1", Status: "delivered", CreatedAt: d.AddDate(0, 0, -3), DeliveryDate: &d,
+		OrderMeta: map[string]any{"line_items": []any{map[string]any{"variant_id": float64(41645770309810), "quantity": float64(1), "name": "Recap"}}}}}
+}
+
+func productFixture() []pgrepo.ProductDesc {
+	return []pgrepo.ProductDesc{{ProductPrincipalID: "41645770309810", MedicineDisplayName: "Recap Serum", MedicineDosage: "1-0-1", MedicineDosageCode: "1-0-1"}}
+}
+
+func dayRangeFor(now time.Time) mongorepo.DayRange {
+	c := common.ISTShift(now)
+	return mongorepo.DayRange{From: common.StartOfDayUTC(c), To: common.EndOfDayUTC(c), FromInclusive: true, ToInclusive: true}
+}
