@@ -7,10 +7,43 @@ Ground truth for behaviour, copy strings and constants: `docs/reference/inventor
 runbook in `docs/reference/`. Design: `docs/superpowers/specs/2026-09-18-tr-bah-service-design.md`.
 Rollout: `docs/superpowers/specs/2026-09-18-rollout-plan.md`.
 
+## Tenants and auth
+
+| Tenant | Economies | Auth |
+|---|---|---|
+| `traya` | legacy 3/7/21 coins + v85 Habit Tracker | Bearer JWT (`JWT_SECRET`) plus a Redis login-status check; `V2_FORM_DATA_TOKEN` for the caseId-keyed routes; `x-internal-token` for server-to-server routes |
+| `mool`, `acne` | Log & Earn rupee ledger | tr-consumer-api-gateway headers (`x-user-info`, `customerId` fallback) |
+
+Every request carries `x-tenant-id`. A route whose economy the tenant does not run answers 404.
+
 ## Run
 1. `cp .env.example .env` and fill in values.
-2. `go run .` (or `air` for live reload).
+2. `go run .` (or `air` for live reload). Mongo, Redis and the tenant Postgres must be reachable —
+   the service exits at boot if Mongo is not.
 3. Swagger: `go install github.com/swaggo/swag/cmd/swag@latest && swag init`, then `/api/docs/`.
+   The handlers already carry the annotations; regenerate `docs/` whenever routes change. On a Mac
+   whose Go toolchain and command-line tools disagree on architecture, run `swag init` in CI or a
+   container instead — it needs cgo.
+
+## Migrations
+
+Log & Earn tables live in each tenant's Postgres database:
+```
+go run ./cmd/migrate --tenant mool          # add --dry-run to list first
+go run ./cmd/migrate --tenant acne
+```
+Mongo indexes are code (`repositories/mongo.EnsureIndexes`) and are created in the background the
+first time a tenant database is resolved.
+
+## Parity harness
+
+The migration runbook's ticket 9 check — replay recorded requests against both services and diff
+the JSON field by field (null and a missing key differ; array order matters):
+```
+go run ./cmd/parity --a https://<api-server> --b http://localhost:3000 \
+  --cases cmd/parity/testdata/sample.jsonl --ignore txnDate,createdAt,updatedAt,timestamp
+```
+Exit code 1 means at least one case differed.
 
 ## Test
 

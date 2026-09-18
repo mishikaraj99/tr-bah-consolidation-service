@@ -1,0 +1,6 @@
+# One JSON object per line. `tenant` sets x-tenant-id; `headers` carries auth.
+{"name":"streakAndRewardBalance v83","tenant":"traya","method":"GET","path":"/streakAndRewardBalance?version=83","headers":{"Authorization":"Bearer REPLACE_ME"}}
+{"name":"bahLogForGivenDate today","tenant":"traya","method":"GET","path":"/bahLogForGivenDate?appVersion=83","headers":{"Authorization":"Bearer REPLACE_ME"}}
+{"name":"coinTransaction page 1","tenant":"traya","method":"GET","path":"/coinTransaction?page=1&limit=6","headers":{"Authorization":"Bearer REPLACE_ME"}}
+{"name":"kit-tracker-page v85","tenant":"traya","method":"GET","path":"/kit-tracker-page?appVersion=85","headers":{"Authorization":"Bearer REPLACE_ME"}}
+{"name":"logearn state","tenant":"mool","method":"GET","path":"/consumers/logearn/state?customerId=REPLACE_ME","headers":{}}

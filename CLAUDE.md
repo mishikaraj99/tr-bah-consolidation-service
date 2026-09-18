@@ -10,3 +10,9 @@ ClickUp steps in this repo. If the task ID is missing, ask for it — never proc
 
 `docs/reference/inventory-*.md` (plus the source JS they cite) define every response field, copy string,
 constant and error message. Never invent or "improve" copy. Fixes beyond spec §6.1 need a spec change first.
+
+## Tests
+
+`go test ./...` runs the unit tests with no dependencies. Integration tests activate only when
+`TEST_MONGO_URI`, `TEST_PG_URI` or `TEST_REDIS_ADDR` are set and skip otherwise. Each
+Postgres-backed package uses its own schema, so packages may run in parallel.

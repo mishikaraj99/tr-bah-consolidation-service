@@ -20,8 +20,13 @@ func testLogEarnStore(t *testing.T) *LogEarnStore {
 		t.Skip("TEST_PG_URI not set")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, uri)
+	cfg, err := pgxpool.ParseConfig(uri)
 	require.NoError(t, err)
+	cfg.MaxConns = 8
+	cfg.ConnConfig.RuntimeParams["search_path"] = "pgrepo_test"
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	require.NoError(t, err)
+	testSchema(t, pool, "pgrepo_test")
 	sql, err := os.ReadFile(filepath.Join("..", "..", "migrations", "pg", "logearn", "001_dose_logs_cash_ledger.sql"))
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, string(sql))
@@ -78,4 +83,18 @@ func TestInsertDoseLog_UniquePerDay(t *testing.T) {
 	logs, err := s.RecentDoseLogs(ctx, cust, 14)
 	require.NoError(t, err)
 	assert.Len(t, logs, 1)
+}
+
+// testSchema isolates this package's tables in a private schema. `go test ./...` runs packages in
+// parallel, so sharing public tables here deadlocked on TRUNCATE's ACCESS EXCLUSIVE lock.
+func testSchema(t *testing.T, pool *pgxpool.Pool, name string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+name)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `SET search_path TO `+name)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+name+` CASCADE`)
+	})
 }
