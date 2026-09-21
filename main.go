@@ -38,6 +38,7 @@ func main() {
 	time.Local = time.UTC
 	cfg := setup.MustLoad()
 	log := setup.NewLogger(cfg.Environment)
+	common.LegacyRedisFallback = cfg.LegacyRedisFallback
 	ctx := context.Background()
 
 	master, err := setup.ConnectMongo(ctx, cfg.MongoURI)

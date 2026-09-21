@@ -273,15 +273,18 @@ func (s *Service) readCalendarCache(ctx context.Context, userID string) *Calenda
 	if !s.cacheEnabled() {
 		return nil
 	}
-	raw, err := s.Redis.Get(ctx, CalendarCacheKey(userID)).Bytes()
-	if err != nil || len(raw) == 0 {
-		return nil
+	for _, key := range common.SharedKeyCandidates(CalendarCacheKey(s.TenantID, userID), LegacyCalendarCacheKey(userID)) {
+		raw, err := s.Redis.Get(ctx, key).Bytes()
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		var out CalendarResponse
+		if json.Unmarshal(raw, &out) != nil {
+			continue
+		}
+		return &out
 	}
-	var out CalendarResponse
-	if json.Unmarshal(raw, &out) != nil {
-		return nil
-	}
-	return &out
+	return nil
 }
 
 func (s *Service) writeCalendarCache(ctx context.Context, userID string, v *CalendarResponse) {
@@ -292,17 +295,19 @@ func (s *Service) writeCalendarCache(ctx context.Context, userID string, v *Cale
 	if err != nil {
 		return
 	}
-	if err := s.Redis.Set(ctx, CalendarCacheKey(userID), raw, CalendarCacheTTLSeconds*time.Second).Err(); err != nil {
+	if err := s.Redis.Set(ctx, CalendarCacheKey(s.TenantID, userID), raw, CalendarCacheTTLSeconds*time.Second).Err(); err != nil {
 		s.Log.Warn("kit-tracker calendar cache write failed", "userId", userID, "error", err.Error())
 	}
 }
 
-// InvalidateCalendarCache removes the cached calendar for a user.
+// InvalidateCalendarCache removes the cached calendar for a user. It deletes the legacy key too,
+// otherwise traya-app-backend would keep serving a stale calendar after a log.
 func (s *Service) InvalidateCalendarCache(ctx context.Context, userID string) {
 	if s.Redis == nil {
 		return
 	}
-	if err := s.Redis.Del(ctx, CalendarCacheKey(userID)).Err(); err != nil {
+	keys := common.SharedKeyCandidates(CalendarCacheKey(s.TenantID, userID), LegacyCalendarCacheKey(userID))
+	if err := s.Redis.Del(ctx, keys...).Err(); err != nil {
 		s.Log.Warn("kit-tracker calendar cache invalidation failed", "userId", userID, "error", err.Error())
 	}
 }

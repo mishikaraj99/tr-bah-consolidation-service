@@ -70,6 +70,27 @@ MongoDB 7.0.43, PostgreSQL and Redis all local; run with `-p 1` (see the Rosetta
 The index bootstrap was additionally verified against a live MongoDB: `uq_user_idempotency_key`
 is created as a unique partial index on `{user_id, idempotency_key}` filtered by `$exists`.
 
+## Post-plan change: tenant-prefixed Redis keys (2026-09-21)
+
+The two Redis keys shared with the Node services are now tenant-scoped. One Redis instance serves all
+three tenants, so a bare user id would have collided across them.
+
+| key | canonical | legacy owner |
+| --- | --- | --- |
+| kit-tracker calendar cache | `<tenant>:kit-tracker-calendar!<userId>` | traya-app-backend |
+| login gate | `<tenant>:user!<userId>login!status` | traya-api-server |
+
+A plain rename would have broken production, because both Node services still write the bare names. So
+`internal/common/rediskey.go` builds both forms and the service reads prefixed-then-legacy, writes
+prefixed only, and **deletes both** on invalidation so app-backend cannot serve a stale calendar after a
+log. `LEGACY_REDIS_FALLBACK` (default `true`, wired to `cfg.LegacyRedisFallback`) is the kill switch;
+rollout plan §8 gives the order for switching it off. Tenant isolation on Redis is not complete until
+that flip happens, and the rollout plan says so explicitly.
+
+Covered by tests in `internal/common`, `auth` (prefixed key, legacy fallback, cross-tenant key rejected,
+fallback off), `internal/habit` (write uses the prefix, read falls back, tenants isolated, invalidation
+deletes both) and `setup` (the flag defaults on). Full suite re-run green with all datastores live.
+
 ## Not implemented, by design
 
 The 17 endpoints the migration runbook deletes in Wave 0, the legacy MOOL Mongo BAH module, and the

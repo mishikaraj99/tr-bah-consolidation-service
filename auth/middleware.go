@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"traya-bah-service/internal/common"
+	"traya-bah-service/tenant"
 )
 
 // Verifier holds the secrets each strategy needs.
@@ -65,8 +66,7 @@ func (v *Verifier) RequireJWT() fiber.Handler {
 		if v.Redis != nil {
 			ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
 			defer cancel()
-			status, err := v.Redis.Get(ctx, "user!"+id.UserID+"login!status").Result()
-			if err != nil || status == "" {
+			if !v.loginStatusOK(ctx, tenantIDOf(c), id.UserID) {
 				return common.WriteError(c, common.FamilyPlain, common.Unauthorized(msgInvalidToken))
 			}
 		}
@@ -140,6 +140,27 @@ func (v *Verifier) RequireAdmin() fiber.Handler {
 		}
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"Error": "Only admin and super admin are allowed"})
 	}
+}
+
+// tenantIDOf reads the resolved tenant; tenant.Middleware always runs before auth.
+func tenantIDOf(c *fiber.Ctx) string {
+	if t := tenant.From(c); t != nil {
+		return t.ID
+	}
+	return ""
+}
+
+// loginStatusOK checks the login gate traya-api-server maintains. It reads the tenant-prefixed key
+// first and falls back to the unprefixed one api-server still writes, so the two services can adopt
+// the prefix independently.
+func (v *Verifier) loginStatusOK(ctx context.Context, tenantID, userID string) bool {
+	for _, key := range common.SharedKeyCandidates(common.LoginStatusKey(tenantID, userID), common.LegacyLoginStatusKey(userID)) {
+		status, err := v.Redis.Get(ctx, key).Result()
+		if err == nil && status != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func str(v any) string {

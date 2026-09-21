@@ -2,6 +2,8 @@
 // Constants and copy are verbatim from traya-app-backend; see docs/reference/inventory-app-backend-v85-habit-tracker.md.
 package habit
 
+import "traya-bah-service/internal/common"
+
 // Reward ladder and daily tiers.
 const (
 	CoinToRupeeDivisor    = 10
@@ -152,5 +154,14 @@ const (
 	CalendarCacheTTLSeconds    = 300
 )
 
-// CalendarCacheKey is the Redis key app-backend owns (the write path must invalidate it).
-func CalendarCacheKey(userID string) string { return "kit-tracker-calendar!" + userID }
+// CalendarCacheKey is the tenant-scoped kit-tracker calendar cache key this service writes.
+// traya-app-backend still uses the unprefixed form, so reads fall back to it and invalidation
+// deletes both (see internal/common/rediskey.go).
+func CalendarCacheKey(tenantID, userID string) string {
+	return common.KitTrackerCalendarKey(tenantID, userID)
+}
+
+// LegacyCalendarCacheKey is the unprefixed key traya-app-backend reads and writes today.
+func LegacyCalendarCacheKey(userID string) string {
+	return common.LegacyKitTrackerCalendarKey(userID)
+}

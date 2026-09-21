@@ -31,6 +31,22 @@ Every request carries `x-tenant-id`. A route whose economy the tenant does not r
    whose Go toolchain and command-line tools disagree on architecture, run `swag init` in CI or a
    container instead — it needs cgo.
 
+## Redis keys
+
+One Redis instance serves all three tenants, so every key this service owns is tenant-scoped. Keys it
+introduces use `bah:<tenant>:`. The two keys shared with the Node services take a `<tenant>:` prefix in
+front of their original name:
+
+| purpose | key | still written in Node by |
+| --- | --- | --- |
+| kit-tracker calendar cache | `<tenant>:kit-tracker-calendar!<userId>` | traya-app-backend |
+| login gate | `<tenant>:user!<userId>login!status` | traya-api-server |
+
+While both stacks run, `LEGACY_REDIS_FALLBACK=true` (the default) lets reads fall back to the unprefixed
+names, writes stay on the prefixed key, and invalidation deletes both. Set it to `false` only after the
+Node services adopt the prefix. The rollout plan's "Retiring the Redis legacy-key fallback" section has
+the exact order.
+
 ## Migrations
 
 Log & Earn tables live in each tenant's Postgres database:

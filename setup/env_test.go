@@ -67,3 +67,23 @@ func TestLoad_Overrides(t *testing.T) {
 	assert.Equal(t, []string{"logearn"}, cfg.TenantEconomies["kibo"])
 	assert.Equal(t, 7, cfg.MaxSockets["recommendation"])
 }
+
+func TestLegacyRedisFallbackDefaultsOn(t *testing.T) {
+	setRequired(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.LegacyRedisFallback {
+		t.Fatal("LEGACY_REDIS_FALLBACK must default to true so the migration does not break")
+	}
+
+	t.Setenv("LEGACY_REDIS_FALLBACK", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LegacyRedisFallback {
+		t.Fatal("LEGACY_REDIS_FALLBACK=false must turn the fallback off")
+	}
+}

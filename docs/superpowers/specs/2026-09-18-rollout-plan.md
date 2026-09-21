@@ -55,7 +55,7 @@ Order (req/day from runbook §01; each step = deploy flag → watch 24h in Last9
 | 7 | `GET /bahLogForGivenDate` | `isPostApiNeeded/isPutApiNeeded` distribution unchanged; archived filter for v85 |
 | 8 | `GET /streakAndRewardBalance` | modals/banner copy diff clean; CRM `/bahHistory` still renders |
 | 9 | `PUT /multipleActivityLogForBAH` | 200 rate 100% (forgiving semantics) |
-| 10 | `POST /activityLogForBAH` — **its own deploy** | reward_transactions per log per cohort = 1; scratch cards minted on ladder days; `kit-tracker-calendar!` keys invalidated |
+| 10 | `POST /activityLogForBAH` — **its own deploy** | reward_transactions per log per cohort = 1; scratch cards minted on ladder days; both `<tenant>:kit-tracker-calendar!` and legacy `kit-tracker-calendar!` keys invalidated |
 | 11 | v85 routes (`/archiveProductForBAH`, `/unarchiveProductForBAH`, `/bah/scratch-card*`, `/kit-tracker-*`) — api-server points `APP_BACKEND_SERVER_BASE_URL`-based calls to this service instead, or flips them like the others | 404/410 pass-through preserved |
 | 12 | CRM: `/bahHistory/:caseId`, `/streakMaster`, `/extraRewardsToUser/:caseId`, `/syncRewardBalanceWithShopFlo/:caseId` | CRM ops sign-off |
 
@@ -109,12 +109,37 @@ After 100% for both tenants: remove `LogEarnModule` from tr-consumer-backend (an
 - Daily reconciliation query during Phases 1–3: per user, count of `reward_transactions` with `credit_remarks` like `bah-legacy-%` per IST day must be ≤ 1; `cash_ledger` `balance_after` must equal running sum.
 - Go/No-Go for each flip: parity diff clean, previous route stable 24h, no open Sev-1 on BAH, on-call aware.
 
-## 8. Lifeline worker and CCD
+## 8. Retiring the Redis legacy-key fallback
+
+Two Redis keys are shared with the Node services. `tr-bah-service` treats the tenant-prefixed name as
+canonical and falls back to the legacy unprefixed name on reads, so nothing breaks while both stacks run:
+
+| key | canonical | legacy (still written by) |
+| --- | --- | --- |
+| kit-tracker calendar cache | `<tenant>:kit-tracker-calendar!<userId>` | `kit-tracker-calendar!<userId>` — traya-app-backend |
+| login gate | `<tenant>:user!<userId>login!status` | `user!<userId>login!status` — traya-api-server |
+
+Reads try prefixed then legacy, writes use prefixed only, and invalidation deletes **both** so app-backend
+cannot serve a stale calendar after a log. Retire the fallback in this order, after Phase 2 completes:
+
+1. Change traya-api-server to write the login-status key as `traya:user!<id>login!status` (dual-write both
+   names for one release, so a rollback cannot log everyone out).
+2. Change traya-app-backend to read and write `traya:kit-tracker-calendar!<id>`.
+3. Wait one full session-TTL window, then confirm the bare keys are no longer being created:
+   `redis-cli --scan --pattern 'user!*login!status' | head` and the same for `kit-tracker-calendar!*`
+   should return nothing new.
+4. Set `LEGACY_REDIS_FALLBACK=false` on `tr-bah-service` and drop the dual-write from api-server.
+
+Until step 4, a bare key is readable by **every** tenant. mool and acne have no Node writer of these keys,
+so in practice only traya populates them, but the fallback is the reason tenant isolation on Redis is not
+complete until it is switched off. Treat step 4 as the gate for that claim.
+
+## 9. Lifeline worker and CCD
 
 - Enable `HABIT_LIFELINE_WORKER_ENABLED=true` on exactly one task first (the worker is idempotent and Redis-locked), one week after Phase 1 step 10, when the v85 rollout decision (runbook ticket 22) is "roll out". Until then the producer enqueues and the ZSET simply accumulates (bounded: one member per user).
 - CCD: api-server adds a Redis subscriber on `ccd_update` that calls the existing `processAsyncEvent('CCD_UPDATE', …)` handler. Deploy it before Phase 1 step 10. Verify `customer_computed_data.current_streak_count` keeps updating after the write flips.
 
-## 9. Timeline (indicative, 1 route/day cadence)
+## 10. Timeline (indicative, 1 route/day cadence)
 
 | Week | Work |
 |---|---|

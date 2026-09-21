@@ -101,7 +101,7 @@ tr-bah-service/
     middleware.go                 x-tenant-id → TenantCtx in c.Locals("tenant"); 400 when missing/unknown
   auth/
     identity.go                   Identity {UserID, CaseID, Email, Roles, Phone, FirstName, Gender}
-    jwt_traya.go                  Bearer HS256 (JWT_SECRET) + Redis user!<id>login!status gate
+    jwt_traya.go                  Bearer HS256 (JWT_SECRET) + Redis <tenant>:user!<id>login!status gate
     v2token.go                    x-access-token / authorization == "Bearer " + V2_FORM_DATA_TOKEN
     internal_token.go             x-internal-token == INTERNAL_SERVICE_TOKEN
     gateway.go                    x-user-info JSON → Identity; customerId query fallback
@@ -198,7 +198,21 @@ Dependency rule: `controllers → internal/* → repositories → setup`. `inter
 - Tenant Mongo DB name: `${tenant_id}_${MONGO_DATABASE_SUFFIX}`; when `ENVIRONMENT=production` and tenant is `traya` → `TrayaProd`. Overridable per tenant with `MONGO_DB_NAME_<TENANT>`.
 - Tenant Postgres: `traya` → single pool from `DATABASE_*` (the api-server database, where `orders`, `users`, `cases`, `product_sku_mapping`, `medicine_master`, `user_order_reminders`, `form_session` live). `mool`/`acne` → pool per tenant on `${tenant_id}_${POSTGRES_DATABASE_SUFFIX}` using `POSTGRES_WRITE_*` (reads also go to the writer; a `POSTGRES_READ_*` replica pool is used for `SELECT`s in `state` when configured).
 - Economy map (code constant, overridable by `TENANT_ECONOMIES` JSON env): `traya: [legacy, habit]`, `mool: [logearn]`, `acne: [logearn]`. A route whose economy is not enabled for the tenant returns 404 `{message:"Not available for tenant <id>"}`.
-- Redis is shared (one instance, `SERVICES_CACHE_*`). Keys that must match existing owners keep their exact names: `kit-tracker-calendar!<userId>`, `user!<userId>login!status`, `user_case:<userId>`. New keys are prefixed `bah:<tenant>:`.
+- Redis is shared (one instance, `SERVICES_CACHE_*`), so every key this service owns is tenant-scoped. New keys are prefixed `bah:<tenant>:`. The three keys with an existing Node owner are prefixed `<tenant>:` in front of their original name, because one Redis serving three tenants would otherwise collide on a bare user id:
+
+| key | canonical name here | still owned in Node by |
+| --- | --- | --- |
+| kit-tracker calendar cache | `<tenant>:kit-tracker-calendar!<userId>` | traya-app-backend |
+| login gate | `<tenant>:user!<userId>login!status` | traya-api-server |
+| user case cache | `user_case:<userId>` | traya-api-server (read-only here) |
+
+  Prefixing alone would break the migration, since the Node services keep writing the bare names. So both prefixed keys carry a **legacy fallback**, built in `internal/common/rediskey.go`:
+
+  - **reads** try the prefixed key first, then the legacy one (`common.SharedKeyCandidates`);
+  - **writes** only ever use the prefixed key, so this service never pollutes another tenant's namespace;
+  - **invalidation deletes both**, otherwise traya-app-backend would keep serving a stale calendar after a log.
+
+  `common.LegacyRedisFallback` (default `true`) is the kill switch. Flip it to `false` once traya-api-server and traya-app-backend adopt the `traya:` prefix; after that the bare keys are ignored and the tenants are fully isolated. The fallback is a no-op for mool and acne, which have no Node writer of these keys.
 
 ## 4. Data model
 
@@ -241,7 +255,7 @@ ON cash_ledger (customer_id, order_id) WHERE reason = 'REDEEM' AND order_id IS N
 
 | Strategy | Used by | Behaviour |
 |---|---|---|
-| `RequireJWT` (traya) | all public legacy/v85/CRM routes | `Authorization: Bearer <jwt>`; HS256 with `JWT_SECRET`; claims `id`→UserID, `caseId`→CaseID, `email`, `roles`, `first_name`, `phone_number`; Redis `user!<id>login!status` must be non-empty. Missing header → 401 `{message:'No authorization header provided.'}`; invalid → 401 `{message:'Invalid or expired token.'}`. `authToken` (raw token) is kept on the identity for the community share URL. |
+| `RequireJWT` (traya) | all public legacy/v85/CRM routes | `Authorization: Bearer <jwt>`; HS256 with `JWT_SECRET`; claims `id`→UserID, `caseId`→CaseID, `email`, `roles`, `first_name`, `phone_number`; Redis `<tenant>:user!<id>login!status` must be non-empty (falling back to the legacy unprefixed `user!<id>login!status` while `LegacyRedisFallback` is on). Missing header → 401 `{message:'No authorization header provided.'}`; invalid → 401 `{message:'Invalid or expired token.'}`. `authToken` (raw token) is kept on the identity for the community share URL. |
 | `RequireV2Token` | `/latestOrderHowtoUseV2`, `/latestRoutineV2`, `/rewardBalance/:caseId` | `x-access-token` or `authorization` equals `"Bearer " + V2_FORM_DATA_TOKEN` (constant-time compare). 401 `{message:'Unauthorized'}`. |
 | `RequireInternal` | app-backend-path routes, mint, redeem | `x-internal-token` equals `INTERNAL_SERVICE_TOKEN`. 401. |
 | `RequireGateway` (mool/acne) | logearn routes | `x-user-info` JSON → `customer_id`, `case_id`, `gender`; else `customerId` query. Missing → 400 `'customerId is required'`. |
@@ -285,7 +299,7 @@ Date formatting helpers reproduce moment tokens used: `DD MMM YYYY`, `D MMMM, YY
 `POST /activityLogForBAH`:
 - `isHabitTracker: true` → `habit.MintOrCredit(userID, streakDay, phone, checkInDate)` runs synchronously in-process; the response carries `scratchCard` (the active card view) on ladder days, `null` otherwise. `card` is present only when minted.
 - `isHabitTracker` false/absent → `legacy.ProcessStreakAndRewards` is dispatched to a bounded worker pool (size `LEGACY_WORKERS`, default 32; queue 1024; when full the job runs inline). Response returns immediately with `scratchCard: null`.
-- Both paths: bust `kit-tracker-calendar!<userId>`, mark tasks, enqueue the lifeline check, emit CCD.
+- Both paths: bust `<tenant>:kit-tracker-calendar!<userId>` **and** the legacy `kit-tracker-calendar!<userId>`, mark tasks, enqueue the lifeline check, emit CCD.
 
 CCD: `ccd.Publish(tenant, eventType, caseID, payload)` publishes JSON `{tenantId, eventType, caseId, payload, emittedAt}` to Redis channel `ccd_update`. Decision for runbook ticket 7: **emit from this service; api-server (owner of customer_computed_data) subscribes**. Publishing failures are logged, never fatal.
 

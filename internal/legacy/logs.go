@@ -343,12 +343,16 @@ func (s *Service) SaveActivityLogs(ctx context.Context, userID string, checkInDa
 	return doc, nil
 }
 
-// invalidateKitTrackerCalendar busts the app-backend-owned cache key; failures are non-fatal.
+// invalidateKitTrackerCalendar busts the kit-tracker calendar cache. It deletes both the
+// tenant-prefixed key this service writes and the unprefixed key traya-app-backend still owns,
+// otherwise app-backend would serve a stale calendar after a log. Failures are non-fatal.
 func (s *Service) invalidateKitTrackerCalendar(ctx context.Context, userID string) {
 	if s.Redis == nil {
 		return
 	}
-	if err := s.Redis.Del(ctx, "kit-tracker-calendar!"+userID).Err(); err != nil {
+	keys := common.SharedKeyCandidates(
+		common.KitTrackerCalendarKey(s.TenantID, userID), common.LegacyKitTrackerCalendarKey(userID))
+	if err := s.Redis.Del(ctx, keys...).Err(); err != nil {
 		s.Log.Warn("kit-tracker calendar cache invalidation failed", "userId", userID, "error", err.Error())
 	}
 }

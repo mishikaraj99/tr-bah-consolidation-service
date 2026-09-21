@@ -57,6 +57,11 @@ type Config struct {
 	LifelinePollMS        int
 
 	ScratchCardsEnabled bool
+
+	// LegacyRedisFallback lets reads fall back to the unprefixed Redis keys that
+	// traya-api-server and traya-app-backend still own. Switch it off once both
+	// Node services write the tenant-prefixed names.
+	LegacyRedisFallback bool
 }
 
 const defaultTenantEconomies = `{"traya":["legacy","habit"],"mool":["logearn"],"acne":["logearn"]}`
@@ -136,6 +141,7 @@ func Load() (*Config, error) {
 		LifelineGraceHours:    getint("HABIT_LIFELINE_GRACE_HOURS", 4),
 		LifelinePollMS:        getint("HABIT_LIFELINE_POLL_MS", 5000),
 		ScratchCardsEnabled:   getbool("HABIT_TRACKER_SCRATCH_CARDS_ENABLED", true),
+		LegacyRedisFallback:   getbool("LEGACY_REDIS_FALLBACK", true),
 	}
 	cfg.IsProduction = cfg.Environment == "production"
 
