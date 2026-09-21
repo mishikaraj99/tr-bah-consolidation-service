@@ -1,5 +1,11 @@
 # tr-bah-service
 
+> **Repository location.** This lives at `mishikaraj99/tr-bah-consolidation-service` (private) only
+> because the `trayalabs1` org blocks repo creation by members. An org owner should create
+> `trayalabs1/tr-bah-consolidation-service` and transfer it, after which the `/ship` + ClickUp
+> policy below applies to every change. Note `trayalabs1/tr-bah-service` is a different,
+> earlier NestJS BAH flow-engine prototype and is unrelated to this service.
+
 Multi-tenant Build-A-Habit service in Go. Tenants: `traya` (legacy 3/7/21 economy + v85 Habit Tracker),
 `mool` and `acne` (Log & Earn ledger). Every request carries `x-tenant-id`.
 
