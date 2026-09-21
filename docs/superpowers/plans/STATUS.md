@@ -59,6 +59,17 @@ Plan: `2026-09-18-tr-bah-service.md` (33 tasks). All 33 are implemented and comm
 - End-to-end boot was exercised up to the Mongo dependency: the service loads config, builds every
   client, and exits with a clear error when Mongo is unreachable (the intended fail-fast).
 
+### Full-suite result (2026-09-21, all datastores live)
+
+```
+ok  auth  cmd/parity  internal/common  internal/habit  internal/habit/lifeline
+ok  internal/legacy  internal/logearn  internal/orders
+ok  repositories/mongo  repositories/pg  routes  setup  tenant        EXIT=0
+```
+MongoDB 7.0.43, PostgreSQL and Redis all local; run with `-p 1` (see the Rosetta note above).
+The index bootstrap was additionally verified against a live MongoDB: `uq_user_idempotency_key`
+is created as a unique partial index on `{user_id, idempotency_key}` filtered by `$exists`.
+
 ## Not implemented, by design
 
 The 17 endpoints the migration runbook deletes in Wave 0, the legacy MOOL Mongo BAH module, and the
