@@ -2,6 +2,8 @@ package legacy
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -42,7 +44,8 @@ func TestGetBahCalendarLogData_CalendarMode(t *testing.T) {
 	assert.Equal(t, "logged", statusFor(out, "2026-09-16"))
 	assert.Equal(t, "active", statusFor(out, "2026-09-18"), "today unlogged becomes active")
 	assert.Equal(t, "active", statusFor(out, "2026-09-17"), "yesterday unlogged and today not logged")
-	assert.Equal(t, "inactive", statusFor(out, "2026-09-09"), "before first delivery")
+	assert.Equal(t, "2026-09-10", out.StartDate, "range starts at the first delivery")
+	assert.Equal(t, "", statusFor(out, "2026-09-09"), "days before the first delivery are outside the range entirely")
 	assert.Equal(t, "inactive", statusFor(out, "2026-09-25"), "after the input date")
 	require.NotEmpty(t, out.Data)
 	assert.Equal(t, "September 2026", out.Data[0].Month)
@@ -131,6 +134,14 @@ func TestCRMHandlers(t *testing.T) {
 	s, _, po := newTestService(t, now)
 	ctx := context.Background()
 	po.userCase = pgUserCase("c1", "M")
+	// A manual grant credits through saveRewardTransaction, which reads the coin expiry from
+	// order-service, so that upstream must be stubbed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("90"))
+	}))
+	defer srv.Close()
+	s.Cfg.OrderServiceBaseURL = srv.URL
+	s.HTTP.OrderService = srv.Client()
 
 	// streak masters
 	_, err := s.Store.UpsertStreakMasterBySlug(ctx, SlugExistingCoinsStreak,

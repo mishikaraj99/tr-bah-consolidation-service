@@ -73,11 +73,16 @@ type RewardTransaction struct {
 	IsDebitTransaction  bool               `bson:"is_debit_transaction"`
 	DebitTransactions   []DebitTransaction `bson:"debit_transactions"`
 	CreditRemarks       string             `bson:"credit_remarks"`
-	AllCoinsUsed        bool               `bson:"all_coins_used"`
-	Status              string             `bson:"status"`
-	ExpireAt            *time.Time         `bson:"expire_at,omitempty"`
-	CreatedAt           time.Time          `bson:"createdAt"`
-	UpdatedAt           time.Time          `bson:"updatedAt"`
+	// IdempotencyKey is set only for credits this service must never duplicate (first log, the
+	// 3/7/21 milestones, the habit-tracker daily/ladder rewards). A unique partial index enforces
+	// it. It is separate from credit_remarks because that field is human-facing copy and is reused
+	// by CRM grants, and because Mongo partial filters cannot match a prefix.
+	IdempotencyKey *string    `bson:"idempotency_key,omitempty"`
+	AllCoinsUsed   bool       `bson:"all_coins_used"`
+	Status         string     `bson:"status"`
+	ExpireAt       *time.Time `bson:"expire_at,omitempty"`
+	CreatedAt      time.Time  `bson:"createdAt"`
+	UpdatedAt      time.Time  `bson:"updatedAt"`
 }
 
 // RedeemTransaction is one document of redeem_reward_transactions.

@@ -20,10 +20,13 @@ type primitiveID = primitive.ObjectID
 
 // SaveRewardInput is saveRewardTransaction's argument set.
 type SaveRewardInput struct {
-	UserID             string
-	Master             *models.StreakMaster
-	PhoneNumber        string
-	Reason             string
+	UserID      string
+	Master      *models.StreakMaster
+	PhoneNumber string
+	Reason      string
+	// IdempotencyKey, when set, makes this credit unique per user at the database level.
+	// Manual CRM grants leave it empty so an operator can repeat the same reason.
+	IdempotencyKey     string
 	CustomAmount       *int
 	CaseID             string
 	ExpiryDaysOverride *int
@@ -106,6 +109,10 @@ func (s *Service) SaveRewardTransaction(ctx context.Context, in SaveRewardInput)
 		IsCreditTransaction: true, IsDebitTransaction: false, TotalDebitCoins: 0,
 		CreditRemarks: remarks, AllCoinsUsed: false, Status: "success", ExpireAt: &future,
 	}
+	if in.IdempotencyKey != "" {
+		key := in.IdempotencyKey
+		doc.IdempotencyKey = &key
+	}
 	ref, err := s.Store.InsertRewardTransaction(ctx, doc)
 	if err != nil {
 		if mongorepo.IsDuplicateKey(err) {
@@ -163,7 +170,8 @@ func (s *Service) CreditRewardCoinsToUser(ctx context.Context, userID string, co
 		}
 		if !already {
 			if _, err := s.SaveRewardTransaction(ctx, SaveRewardInput{
-				UserID: userID, Master: firstMaster, PhoneNumber: phone, Reason: RemarkFirstLog, CaseID: caseID,
+				UserID: userID, Master: firstMaster, PhoneNumber: phone, Reason: RemarkFirstLog,
+				IdempotencyKey: RemarkFirstLog, CaseID: caseID,
 			}); err != nil {
 				return nil, err
 			}
@@ -176,9 +184,10 @@ func (s *Service) CreditRewardCoinsToUser(ctx context.Context, userID string, co
 		}
 		if master != nil && !master.ID.IsZero() {
 			// O8+ enhanced coins are display-only: the write path hardcodes false (inventory §7.8).
+			key := RemarkMilestone(master.Slug, common.ISTDateString(checkInDate))
 			if _, err := s.SaveRewardTransaction(ctx, SaveRewardInput{
 				UserID: userID, Master: master, PhoneNumber: phone, CaseID: caseID,
-				Reason: RemarkMilestone(master.Slug, common.ISTDateString(checkInDate)),
+				Reason: key, IdempotencyKey: key,
 			}); err != nil {
 				return nil, err
 			}
@@ -212,7 +221,8 @@ func (s *Service) CreditStreakRestartBonus(ctx context.Context, userID, phone st
 		}
 	}
 	_, err = s.SaveRewardTransaction(ctx, SaveRewardInput{
-		UserID: userID, Master: master, PhoneNumber: phone, Reason: RemarkStreakRestart, CustomAmount: &amount, CaseID: caseID,
+		UserID: userID, Master: master, PhoneNumber: phone, Reason: RemarkStreakRestart,
+		IdempotencyKey: RemarkRestart(common.ISTDateString(checkInDate)), CustomAmount: &amount, CaseID: caseID,
 	})
 	return err
 }

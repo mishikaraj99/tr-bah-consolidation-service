@@ -74,7 +74,8 @@ func TestSaveRewardTransaction_ExpiryAndIdempotency(t *testing.T) {
 	require.NoError(t, err)
 
 	days := 90
-	res, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: RemarkFirstLog, CaseID: "c1", ExpiryDaysOverride: &days})
+	res, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: RemarkFirstLog,
+		IdempotencyKey: RemarkFirstLog, CaseID: "c1", ExpiryDaysOverride: &days})
 	require.NoError(t, err)
 	require.NotNil(t, res.Ref)
 	assert.False(t, res.Duplicate)
@@ -85,11 +86,23 @@ func TestSaveRewardTransaction_ExpiryAndIdempotency(t *testing.T) {
 	assert.Equal(t, "COIN_CREDITED", ccd.events[0]["eventType"])
 
 	// replay → duplicate, no second CCD
-	res2, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: RemarkFirstLog, CaseID: "c1", ExpiryDaysOverride: &days})
+	res2, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: RemarkFirstLog,
+		IdempotencyKey: RemarkFirstLog, CaseID: "c1", ExpiryDaysOverride: &days})
 	require.NoError(t, err)
 	assert.True(t, res2.Duplicate)
 	assert.Nil(t, res2.Ref)
 	assert.Len(t, ccd.events, 1, "no duplicate CCD event")
+
+	// an unkeyed credit (a manual CRM grant) may repeat with the same remarks
+	res3, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: "Manual grant",
+		CaseID: "c1", ExpiryDaysOverride: &days})
+	require.NoError(t, err)
+	require.NotNil(t, res3.Ref)
+	res4, err := s.SaveRewardTransaction(ctx, SaveRewardInput{UserID: "u1", Master: master, Reason: "Manual grant",
+		CaseID: "c1", ExpiryDaysOverride: &days})
+	require.NoError(t, err)
+	require.NotNil(t, res4.Ref)
+	assert.False(t, res4.Duplicate)
 }
 
 func TestCreditRewardCoinsToUser_Legacy(t *testing.T) {

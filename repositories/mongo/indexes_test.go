@@ -35,16 +35,25 @@ func TestEnsureIndexes_IdempotencyPartialIndex(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	require.NoError(t, EnsureIndexes(ctx, s.DB)) // second run is a no-op
-	mk := func(remark string) *models.RewardTransaction {
+	mk := func(remark string, key *string) *models.RewardTransaction {
 		return &models.RewardTransaction{UserID: "u1", StreakMasterID: primitive.NewObjectID(), CreditCoins: 100,
-			IsCreditTransaction: true, CreditRemarks: remark, Status: "success"}
+			IsCreditTransaction: true, CreditRemarks: remark, IdempotencyKey: key, Status: "success"}
 	}
-	_, err := s.InsertRewardTransaction(ctx, mk("bah-legacy-first-log"))
+	firstLog := "bah-legacy-first-log"
+	_, err := s.InsertRewardTransaction(ctx, mk(firstLog, &firstLog))
 	require.NoError(t, err)
-	_, err = s.InsertRewardTransaction(ctx, mk("bah-legacy-first-log"))
-	assert.True(t, IsDuplicateKey(err), "second idempotent remark must collide")
-	_, err = s.InsertRewardTransaction(ctx, mk("Manual grant"))
+	_, err = s.InsertRewardTransaction(ctx, mk(firstLog, &firstLog))
+	assert.True(t, IsDuplicateKey(err), "a repeated idempotency key must collide")
+
+	// A credit with no key (a manual CRM grant) may repeat, even with identical remarks.
+	_, err = s.InsertRewardTransaction(ctx, mk("Manual grant", nil))
 	require.NoError(t, err)
-	_, err = s.InsertRewardTransaction(ctx, mk("Manual grant"))
-	require.NoError(t, err, "human remarks are not unique")
+	_, err = s.InsertRewardTransaction(ctx, mk("Manual grant", nil))
+	require.NoError(t, err, "unkeyed credits are not unique")
+
+	// The key is scoped per user.
+	other := &models.RewardTransaction{UserID: "u2", StreakMasterID: primitive.NewObjectID(), CreditCoins: 100,
+		IsCreditTransaction: true, CreditRemarks: firstLog, IdempotencyKey: &firstLog, Status: "success"}
+	_, err = s.InsertRewardTransaction(ctx, other)
+	require.NoError(t, err, "another user may hold the same key")
 }

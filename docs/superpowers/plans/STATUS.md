@@ -46,10 +46,11 @@ Plan: `2026-09-18-tr-bah-service.md` (33 tasks). All 33 are implemented and comm
   the newest row by `created_at`, which is the transaction-start time and so does not follow commit
   order; the balance is now summed under the per-customer advisory lock.
 - Redis integration tests (`internal/habit/lifeline`): run and pass against a local Redis.
-- Mongo integration tests (`repositories/mongo`, `internal/legacy`, and the service-level tests that
-  build on them): **skipped** — no MongoDB on this machine. Homebrew refuses the `mongodb/brew` tap
-  without an explicit `brew trust`, and Docker is unavailable. Run them with:
-  `TEST_MONGO_URI=mongodb://localhost:27017 go test ./... -count=1`
+- Mongo integration tests (`repositories/mongo`, `internal/legacy`): run and pass against a local
+  MongoDB 7.0.43. They caught a **production-breaking bug**: the idempotency index used a `$regex`
+  in its `partialFilterExpression`, which MongoDB rejects, so index bootstrap would have failed for
+  every tenant. Credits now carry a dedicated `idempotency_key` field with a partial unique index
+  keyed on `$exists`, which Mongo does support.
 - `go test ./...` must be run with `-p 1` on this machine: its Go toolchain is the amd64 build on
   an arm64 Mac, so the test binaries run under Rosetta and starting nine at once stalls them before
   they execute. Each package passes on its own, and serially. A native arm64 toolchain removes this.

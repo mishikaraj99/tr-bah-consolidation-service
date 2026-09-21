@@ -93,10 +93,11 @@ func (s *Service) EnsureStreakMaster(ctx context.Context, r Reward) (*models.Str
 // SaveRewardTransaction90 credits coins with the v85 90-day expiry and no Shopflo mirror.
 func (s *Service) SaveRewardTransaction90(ctx context.Context, userID string, master *models.StreakMaster, reason string, coins int) (*models.RewardTransaction, bool, error) {
 	future := common.UTCMidnight(s.now().AddDate(0, 0, 1+CoinExpiryDays))
+	key := reason // habit-tracker credits are keyed by their remarks (daily/ladder + IST date)
 	doc, err := s.Store.InsertRewardTransaction(ctx, &models.RewardTransaction{
 		UserID: userID, StreakMasterID: master.ID, CreditCoins: coins,
 		IsCreditTransaction: true, IsDebitTransaction: false, TotalDebitCoins: 0,
-		CreditRemarks: reason, AllCoinsUsed: false, Status: "success", ExpireAt: &future,
+		CreditRemarks: reason, IdempotencyKey: &key, AllCoinsUsed: false, Status: "success", ExpireAt: &future,
 	})
 	if err != nil {
 		if mongorepo.IsDuplicateKey(err) {

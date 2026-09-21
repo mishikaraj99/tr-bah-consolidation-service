@@ -144,7 +144,17 @@ func TestSaveActivityLogsAndCreateStreakAndGiveRewards(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, logs, 1, "no duplicate document")
 
-	// logging for yesterday when today exists → refusal, and scratchCard key is omitted
+	// Logging for yesterday while only today is logged is allowed: the guard looks for a log on
+	// the target day (yesterday), not on today. This mirrors api-server's range
+	// [zero(checkInDate), zero(clientNow)).
+	res, err = s.SaveActivityLogsAndCreateStreakAndGiveRewards(ctx, LogActivityInput{UserID: "u1", IsLogForToday: false, ProductPrescriptions: pp})
+	require.NoError(t, err)
+	assert.Contains(t, res.Message, "User checked in successfully for date")
+	logs, err = s.Store.FindAllActivityLogs(ctx, "u1", nil)
+	require.NoError(t, err)
+	assert.Len(t, logs, 2, "yesterday is now logged too")
+
+	// Repeating it now trips the guard, and the scratchCard key is omitted from that response.
 	res, err = s.SaveActivityLogsAndCreateStreakAndGiveRewards(ctx, LogActivityInput{UserID: "u1", IsLogForToday: false, ProductPrescriptions: pp})
 	require.NoError(t, err)
 	assert.Contains(t, res.Message, "User cannot log for date")

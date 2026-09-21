@@ -9,9 +9,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// IdempotentRemarkPattern matches credit_remarks that are idempotency keys (spec §4).
-const IdempotentRemarkPattern = "^(bah-legacy-|habit-tracker-)"
-
 // EnsureIndexes creates every index the service relies on. Idempotent; safe to call per tenant DB.
 func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -21,10 +18,12 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		CollRewardTransactions: {
 			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "status", Value: 1}, {Key: "expire_at", Value: 1}, {Key: "all_coins_used", Value: 1}}},
 			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "createdAt", Value: -1}}},
-			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "credit_remarks", Value: 1}},
-				Options: options.Index().SetUnique(true).SetName("uq_user_idempotent_credit_remarks").SetPartialFilterExpression(bson.M{
-					"is_credit_transaction": true,
-					"credit_remarks":        bson.M{"$regex": IdempotentRemarkPattern},
+			// Mongo partial filters allow only equality, $exists, $type and range operators — not
+			// $regex — so idempotent credits carry a dedicated key rather than being matched on a
+			// credit_remarks prefix.
+			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "idempotency_key", Value: 1}},
+				Options: options.Index().SetUnique(true).SetName("uq_user_idempotency_key").SetPartialFilterExpression(bson.M{
+					"idempotency_key": bson.M{"$exists": true},
 				})},
 		},
 		CollRedeemTransactions: {

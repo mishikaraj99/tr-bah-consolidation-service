@@ -209,7 +209,7 @@ All Mongo collection names, field names and types are exactly those in the inven
 |---|---|---|
 | `reward_transactions` | `{user_id:1, status:1, expire_at:1, all_coins_used:1}` | balance aggregation |
 | `reward_transactions` | `{user_id:1, createdAt:-1}` | history |
-| `reward_transactions` | partial UNIQUE `{user_id:1, credit_remarks:1}` where `is_credit_transaction:true` and `credit_remarks` matches `^(bah-legacy-\|habit-tracker-)` | idempotent credits |
+| `reward_transactions` | partial UNIQUE `{user_id:1, idempotency_key:1}` where `idempotency_key` exists | idempotent credits |
 | `redeem_reward_transactions` | partial UNIQUE `{user_id:1, order_id:1}` where `order_id` exists and `status:'success'` | one redemption per order |
 | `redeem_reward_transactions` | partial UNIQUE `{user_id:1, shop_flo_txn_id:1}` where exists | one redemption per Shopflo txn |
 | `user_activity_logs_for_bah` | `{user_id:1, is_active:1, check_ins_for_date:-1}` | as app-backend |
@@ -221,7 +221,11 @@ All Mongo collection names, field names and types are exactly those in the inven
 | `user_bah_archived_products` | UNIQUE `{user_id:1}` | |
 | `customeractivitylogs` | `{case_id:1, event:1, createdAt:-1}` | |
 
-Idempotency keys written into `credit_remarks`:
+Idempotency keys are written into a dedicated `idempotency_key` field, not into `credit_remarks`.
+MongoDB partial filters accept only equality, `$exists`, `$type` and range operators — not `$regex` —
+so a prefix match on `credit_remarks` cannot back a partial unique index, and `credit_remarks` is
+human-facing copy that CRM grants legitimately repeat. `credit_remarks` still carries the same value
+for display and for the cross-service existence check against rows app-backend wrote. The keys:
 - legacy first-log bonus: `bah-legacy-first-log`
 - legacy milestone: `bah-legacy-<slug>-<IST YYYY-MM-DD of checkInDate>` (slug of the 3/7/21 master)
 - legacy streak-restart bonus: `bah-legacy-restart-<IST date>`
